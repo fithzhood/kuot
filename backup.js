@@ -111,21 +111,45 @@
 
     function css(el, s) { for (var k in s) el.style[k] = s[k]; }
 
-    function costruisci() {
-        var apri = document.createElement('button');
-        apri.textContent = '⤓';
-        apri.title = 'Travaso dati';
-        css(apri, {
-            // In alto a sinistra: in basso finiva sotto la barra di navigazione
-            // di sistema, e il tocco non lo prendeva.
-            position: 'fixed', left: '6px', top: '6px', zIndex: '2147483646',
-            width: '44px', height: '44px', borderRadius: '22px', border: '0',
-            background: 'rgba(40,40,48,0.75)', color: '#fff', fontSize: '20px',
-            lineHeight: '44px', padding: '0', cursor: 'pointer'
-        });
-        apri.addEventListener('click', apriPannello);
-        document.body.appendChild(apri);
+    // Come si apre il pannello.
+    //
+    // Prima c'era un pulsante fisso in alto a sinistra, sempre in vista: un
+    // comando di servizio piantato in mezzo all'app, che dava fastidio. Ora
+    // non c'e' nessun pulsante di serie. Si apre in tre modi:
+    //
+    //   1. un elemento qualsiasi della pagina con l'attributo `data-travaso`
+    //      (il posto giusto: dentro il menu o le impostazioni dell'app);
+    //   2. una pressione lunga (1 secondo) sul titolo, che ogni pagina ha:
+    //      serve come via di servizio anche dove il menu non c'e';
+    //   3. window.travaso.apri(), per chi vuole agganciarlo altrove.
+    function collegaAperture() {
+        Array.prototype.forEach.call(
+            document.querySelectorAll('[data-travaso]'),
+            function (el) { el.addEventListener('click', apriPannello); }
+        );
 
+        var titolo = document.querySelector('h1') ||
+                     document.querySelector('.app-header') ||
+                     document.querySelector('header');
+        if (!titolo) return;
+
+        var timer = null;
+        var parti = function () {
+            fermati();
+            timer = setTimeout(function () { timer = null; apriPannello(); }, 1000);
+        };
+        var fermati = function () {
+            if (timer) { clearTimeout(timer); timer = null; }
+        };
+        titolo.addEventListener('touchstart', parti, { passive: true });
+        titolo.addEventListener('mousedown', parti);
+        ['touchend', 'touchmove', 'touchcancel', 'mouseup', 'mouseleave']
+            .forEach(function (ev) { titolo.addEventListener(ev, fermati); });
+        // Su Android la pressione lunga aprirebbe la lente del testo: qui no.
+        titolo.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    }
+
+    function costruisci() {
         pannello = document.createElement('div');
         css(pannello, {
             position: 'fixed', inset: '0', zIndex: '2147483647', display: 'none',
@@ -174,6 +198,9 @@
         pannello.appendChild(riga);
         pannello.appendChild(input);
         document.body.appendChild(pannello);
+
+        collegaAperture();
+        window.travaso = { apri: apriPannello };
     }
 
     function bottone(testo, azione) {

@@ -1311,3 +1311,19 @@ body.capacitor .device-nav-bar {
 body.capacitor .bottom-nav {
     bottom: 0 !important;
 }
+
+/* Il modulo di travaso non mette piu' un pulsante fisso sullo schermo: si apre
+   da qui, dentro le impostazioni. (In alternativa: pressione lunga sulla barra
+   in alto.) E' un comando di servizio, quindi sta in secondo piano. */
+.travaso-voce {
+    width: 100%;
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 0.85rem;
+    opacity: 0.75;
+}
