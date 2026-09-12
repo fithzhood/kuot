@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Kuot - Daily Quotes</title>
+    <link rel="manifest" href="kuot-manifest.json">
+    <meta name="theme-color" content="#3498DB">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Kuot">
+    <link rel="stylesheet" href="kuot.css?v=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="current-date"></div><span id="build-tag" class="build-tag"></span>
+            <button class="menu-btn" onclick="toggleSettings()">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1 1.51V6a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+        </header>
+
+        <!-- Settings Panel -->
+        <div id="settingsPanel" class="settings-panel">
+            <div class="settings-content">
+                <h3>Settings</h3>
+                <div class="theme-selector">
+                    <label>Choose Theme:</label>
+                    <div class="theme-options">
+                        <button class="theme-btn" data-theme="serene">
+                            <span class="theme-preview serene"></span>
+                            Serene
+                        </button>
+                        <button class="theme-btn" data-theme="natural">
+                            <span class="theme-preview natural"></span>
+                            Natural
+                        </button>
+                        <button class="theme-btn" data-theme="elegant">
+                            <span class="theme-preview elegant"></span>
+                            Elegant
+                        </button>
+                    </div>
+                </div>
+                <button class="close-settings" onclick="toggleSettings()">Close</button>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Home Screen -->
+            <section id="homeScreen" class="screen active">
+                <div class="quote-container">
+                    <div id="dailyQuote" class="daily-quote">
+                        <div class="empty-state">
+                            <div class="empty-icon">💭</div>
+                            <h2>Waiting for Quotes</h2>
+                            <p>Start your collection of wisdom</p>
+                            <button class="cta-button" onclick="switchTab('add')">Add Your First Quote</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Library Screen -->
+            <section id="libraryScreen" class="screen">
+                <div class="library-header">
+                    <div class="search-container">
+                        <input type="text" id="searchInput" placeholder="Search quotes..." class="search-input">
+                        <svg class="search-icon" viewBox="0 0 24 24" width="20" height="20">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="m21 21-4.35-4.35"/>
+                        </svg>
+                    </div>
+                    <div class="filter-chips">
+                        <button class="chip active" data-filter="all">All</button>
+                        <button class="chip" data-filter="favorites">Favorites</button>
+                        <button class="chip" data-filter="recent">Recent</button>
+                    </div>
+                    <div class="sort-options">
+                        <select id="sortSelect">
+                            <option value="recent">Most Recent</option>
+                            <option value="alphabetical">Alphabetical</option>
+                            <option value="random">Random</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="quotesGrid" class="quotes-grid">
+                    <div class="empty-state">
+                        <div class="empty-icon">📚</div>
+                        <h2>No Quotes Yet</h2>
+                        <p>Your collection will appear here</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Add Quote Screen -->
+            <section id="addScreen" class="screen">
+                <form id="addQuoteForm" class="add-form">
+                    <h2>Add New Quote</h2>
+                    
+                    <div class="form-group">
+                        <label for="quoteText">Quote *</label>
+                        <textarea id="quoteText" placeholder="Enter the quote..." maxlength="500" required></textarea>
+                        <div class="char-counter">0/500</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="authorName">Author *</label>
+                        <input type="text" id="authorName" placeholder="Author name" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="quoteDate">Date</label>
+                        <input type="text" id="quoteDate" placeholder="e.g. 1963, March 1963, 15/03/1963">
+                        <div class="date-helper">Enter year, month/year, or full date (DD/MM/YYYY)</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="authorPhoto">Author Photo</label>
+                        <div class="photo-upload-area" onclick="document.getElementById('photoInput').click()">
+                            <div class="photo-placeholder">
+                                <svg viewBox="0 0 24 24" width="48" height="48">
+                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                    <circle cx="12" cy="13" r="4"/>
+                                </svg>
+                                <span>Add Photo</span>
+                            </div>
+                            <div class="photo-preview" style="display: none;">
+                                <img id="photoPreview" alt="Author photo">
+                                <button type="button" class="remove-photo" onclick="removePhoto(event)">×</button>
+                            </div>
+                        </div>
+                        <input type="file" id="photoInput" accept="image/*" style="display: none;">
+                    </div>
+
+                    <button type="submit" class="submit-btn">Save Quote</button>
+                </form>
+            </section>
+
+            <!-- Quote Detail Modal -->
+            <div id="quoteModal" class="modal">
+                <div class="modal-content">
+                    <button class="modal-close" onclick="closeQuoteModal()">&times;</button>
+                    <div class="quote-detail">
+                        <div class="quote-nav">
+                            <button class="nav-btn prev" onclick="navigateQuote(-1)">‹</button>
+                            <button class="nav-btn next" onclick="navigateQuote(1)">›</button>
+                        </div>
+                        <div id="modalQuoteContent"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Edit Quote Modal -->
+            <div id="editQuoteModal" class="modal">
+                <div class="modal-content">
+                    <button class="modal-close" onclick="closeEditModal()">&times;</button>
+                    <div class="edit-quote-container">
+                        <form id="editQuoteForm" class="add-form">
+                            <h2>Edit Quote</h2>
+                            
+                            <div class="form-group">
+                                <label for="editQuoteText">Quote *</label>
+                                <textarea id="editQuoteText" placeholder="Enter the quote..." maxlength="500" required></textarea>
+                                <div class="char-counter">0/500</div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="editAuthorName">Author *</label>
+                                <input type="text" id="editAuthorName" placeholder="Author name" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="editQuoteDate">Date</label>
+                                <input type="text" id="editQuoteDate" placeholder="e.g. 1963, March 1963, 15/03/1963">
+                                <div class="date-helper">Enter year, month/year, or full date (DD/MM/YYYY)</div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="editAuthorPhoto">Author Photo</label>
+                                <div class="photo-upload-area" onclick="document.getElementById('editPhotoInput').click()">
+                                    <div class="photo-placeholder" id="editPhotoPlaceholder">
+                                        <svg viewBox="0 0 24 24" width="48" height="48">
+                                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                            <circle cx="12" cy="13" r="4"/>
+                                        </svg>
+                                        <span>Add Photo</span>
+                                    </div>
+                                    <div class="photo-preview" id="editPhotoPreview" style="display: none;">
+                                        <img id="editPhotoPreviewImg" alt="Author photo">
+                                        <button type="button" class="remove-photo" onclick="removeEditPhoto(event)">×</button>
+                                    </div>
+                                </div>
+                                <input type="file" id="editPhotoInput" accept="image/*" style="display: none;">
+                            </div>
+
+                            <div class="form-actions">
+                                <button type="button" class="cancel-btn" onclick="closeEditModal()">Cancel</button>
+                                <button type="submit" class="submit-btn">Save Changes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Image Fullscreen Modal -->
+            <div id="imageModal" class="image-modal">
+                <div class="image-modal-content">
+                    <button class="image-modal-close" onclick="closeImageModal()">&times;</button>
+                    <img id="fullscreenImage" src="" alt="Fullscreen image">
+                    <div class="image-modal-info">
+                        <div class="image-author-name"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Device Navigation Bar (Black Background) -->
+        <div class="device-nav-bar"></div>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item active" data-tab="home" onclick="switchTab('home')">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                    <polyline points="9,22 9,12 15,12 15,22"/>
+                </svg>
+                <span>Home</span>
+            </button>
+            <button class="nav-item" data-tab="library" onclick="switchTab('library')">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+                <span>Library</span>
+            </button>
+            <button class="nav-item" data-tab="add" onclick="switchTab('add')">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="16"/>
+                    <line x1="8" y1="12" x2="16" y2="12"/>
+                </svg>
+                <span>Add</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="kuot.js?v=1"></script>
+</body>
+</html>

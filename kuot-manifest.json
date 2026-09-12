@@ -1,0 +1,33 @@
+{
+    "name": "Kuot - Daily Quotes",
+    "short_name": "Kuot",
+    "description": "Your personal collection of daily wisdom and inspiration",
+    "start_url": "./",
+    "display": "standalone",
+    "background_color": "#F5F5F0",
+    "theme_color": "#3498DB",
+    "orientation": "portrait-primary",
+    "scope": "./",
+    "icons": [
+        {
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%233498DB' rx='24'/%3E%3Ctext x='96' y='120' font-family='serif' font-size='120' fill='white' text-anchor='middle' font-style='italic'%3E%22%3C/text%3E%3C/svg%3E",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        },
+        {
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%233498DB' rx='64'/%3E%3Ctext x='256' y='320' font-family='serif' font-size='320' fill='white' text-anchor='middle' font-style='italic'%3E%22%3C/text%3E%3C/svg%3E",
+            "sizes": "512x512",
+            "type": "image/svg+xml"
+        }
+    ],
+    "categories": ["productivity", "lifestyle", "education"],
+    "screenshots": [
+        {
+            "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 430 932'%3E%3Crect width='430' height='932' fill='%23F5F5F0'/%3E%3Crect x='20' y='200' width='390' height='200' fill='white' rx='16'/%3E%3Ctext x='215' y='280' font-family='serif' font-size='18' fill='%232C3E50' text-anchor='middle'%3E%22The only way to do great work%3C/text%3E%3Ctext x='215' y='310' font-family='serif' font-size='18' fill='%232C3E50' text-anchor='middle'%3Eis to love what you do.%22%3C/text%3E%3Ccircle cx='180' cy='350' r='20' fill='%233498DB'/%3E%3Ctext x='220' y='355' font-family='sans-serif' font-size='14' fill='%232C3E50'%3ESteve Jobs%3C/text%3E%3C/svg%3E",
+            "sizes": "430x932",
+            "type": "image/svg+xml",
+            "form_factor": "narrow"
+        }
+    ],
+    "prefer_related_applications": false
+}
