@@ -1298,3 +1298,16 @@ textarea,
     -webkit-user-select: text;
     user-select: text;
 }
+
+/* --- Finta barra di navigazione ---------------------------------------
+   L'app disegnava da se' una striscia nera alta 60 px in fondo, per
+   assomigliare alle barre di sistema del vecchio guscio. Nel guscio nuovo le
+   barre di sistema sono nascoste davvero, quindi quella striscia e' solo
+   spazio nero sprecato: si toglie, e la barra dei tre pulsanti scende. */
+body.capacitor .device-nav-bar {
+    display: none !important;
+}
+
+body.capacitor .bottom-nav {
+    bottom: 0 !important;
+}
