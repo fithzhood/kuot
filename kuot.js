@@ -17,59 +17,73 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ===== KUOT APP - MAIN JAVASCRIPT FILE =====
+//
+// Settembre 2026: le citazioni si riconoscono dal loro `id`, non piu' dalla
+// posizione nell'elenco. Prima la citazione del giorno, le preferite e le
+// frecce della scheda usavano l'indice nell'array: bastava aggiungere una
+// citazione (che finiva in testa in memoria ma in coda nel database) perche'
+// "Modifica" in Home aprisse quella accanto, e le frecce saltavano a caso.
+
+const MESI_BREVI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+const RECENTI_QUANTE = 10;
 
 class KuotApp {
     constructor() {
         this.quotes = [];
-        this.currentQuoteIndex = 0;
         this.filteredQuotes = [];
         this.currentFilter = 'all';
         this.currentSort = 'recent';
         this.searchQuery = '';
         this.dailyQuoteDate = null;
-        this.dailyQuoteIndex = -1;
-        this.usedQuoteIndexes = [];
+        this.dailyQuoteId = null;
+        this.usedQuoteIds = [];
         this.currentTheme = 'serene';
-        
-        // Initialize the app
+
+        // Scheda aperta dalla Libreria: l'elenco che si scorre con le frecce
+        // e' fissato al momento dell'apertura, cosi' un ordinamento casuale o
+        // una stella tolta non lo rimescolano sotto il dito.
+        this.modalIds = [];
+        this.modalPos = -1;
+
+        // Foto nei moduli di aggiunta e modifica. `origine` dice da dove viene:
+        // 'manuale' (caricata ora), 'autore' (ripresa da un'altra citazione
+        // dello stesso autore), 'citazione' (quella che la citazione aveva gia').
+        this.photoState = {
+            add: { data: null, origine: null, rifiutataPer: null },
+            edit: { data: null, origine: null, rifiutataPer: null }
+        };
+
         this.init();
     }
 
     async init() {
         try {
-            // Initialize storage
             await this.initStorage();
-            
-            // Load data
             await this.loadQuotes();
             await this.loadSettings();
-            
-            // Setup UI
+
             this.setupEventListeners();
             this.updateCurrentDate();
             this.applyTheme();
-            
-            // Load initial content
+
             this.updateDailyQuote();
             this.updateLibraryView();
-            
+            this.updateAuthorList();
+
             console.log('Kuot App initialized successfully');
         } catch (error) {
             console.error('Error initializing app:', error);
-            this.showError('Failed to initialize app');
+            this.showError("Non riesco ad avviare l'app");
         }
     }
 
     // ===== STORAGE SYSTEM (IndexedDB with localStorage fallback) =====
     async initStorage() {
         this.useIndexedDB = false;
-        
         try {
-            // Try to initialize IndexedDB
             if ('indexedDB' in window) {
                 await this.initIndexedDB();
                 this.useIndexedDB = true;
-                console.log('Using IndexedDB for storage');
             } else {
                 throw new Error('IndexedDB not supported');
             }
@@ -82,25 +96,18 @@ class KuotApp {
     initIndexedDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open('KuotDB', 1);
-            
             request.onerror = () => reject(request.error);
-            
             request.onsuccess = (event) => {
                 this.db = event.target.result;
                 resolve();
             };
-            
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
-                
-                // Create quotes store
                 if (!db.objectStoreNames.contains('quotes')) {
                     const quotesStore = db.createObjectStore('quotes', { keyPath: 'id', autoIncrement: true });
                     quotesStore.createIndex('date', 'date', { unique: false });
                     quotesStore.createIndex('author', 'author', { unique: false });
                 }
-                
-                // Create settings store
                 if (!db.objectStoreNames.contains('settings')) {
                     db.createObjectStore('settings', { keyPath: 'key' });
                 }
@@ -108,58 +115,60 @@ class KuotApp {
         });
     }
 
-    async saveQuotes() {
-        try {
-            if (this.useIndexedDB) {
-                const transaction = this.db.transaction(['quotes'], 'readwrite');
-                const store = transaction.objectStore('quotes');
-                
-                // Clear existing quotes
-                await new Promise((resolve, reject) => {
-                    const clearRequest = store.clear();
-                    clearRequest.onsuccess = () => resolve();
-                    clearRequest.onerror = () => reject(clearRequest.error);
-                });
-                
-                // Add all quotes
-                for (const quote of this.quotes) {
-                    await new Promise((resolve, reject) => {
-                        const addRequest = store.add(quote);
-                        addRequest.onsuccess = () => resolve();
-                        addRequest.onerror = () => reject(addRequest.error);
-                    });
-                }
-            } else {
-                // Fallback to localStorage
-                localStorage.setItem('kuot_quotes', JSON.stringify(this.quotes));
-            }
-        } catch (error) {
-            console.error('Error saving quotes:', error);
-            // Try localStorage as backup
+    // Esegue `lavoro(store)` in una transazione e si risolve quando e' chiusa
+    // davvero (oncomplete), non quando l'ultima richiesta ha risposto.
+    idb(storeName, mode, lavoro) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction([storeName], mode);
+            let risultato;
+            tx.oncomplete = () => resolve(risultato);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+            const req = lavoro(tx.objectStore(storeName));
+            if (req) req.onsuccess = () => { risultato = req.result; };
+        });
+    }
+
+    // Una citazione alla volta: prima ogni stellina riscriveva tutte le
+    // citazioni con le loro foto, cioe' 4 MB.
+    async putQuote(quote) {
+        if (this.useIndexedDB) {
             try {
-                localStorage.setItem('kuot_quotes', JSON.stringify(this.quotes));
-            } catch (e) {
-                console.error('Failed to save to localStorage as well:', e);
-                throw new Error('Failed to save quotes');
+                await this.idb('quotes', 'readwrite', (store) => store.put(quote));
+                return;
+            } catch (error) {
+                console.error('Error saving quote:', error);
             }
+        }
+        this.saveQuotesLocal();
+    }
+
+    async removeQuoteFromStorage(id) {
+        if (this.useIndexedDB) {
+            try {
+                await this.idb('quotes', 'readwrite', (store) => store.delete(id));
+                return;
+            } catch (error) {
+                console.error('Error deleting quote:', error);
+            }
+        }
+        this.saveQuotesLocal();
+    }
+
+    saveQuotesLocal() {
+        try {
+            localStorage.setItem('kuot_quotes', JSON.stringify(this.quotes));
+        } catch (e) {
+            console.error('Failed to save to localStorage:', e);
+            throw new Error('Failed to save quotes');
         }
     }
 
     async loadQuotes() {
         try {
             if (this.useIndexedDB) {
-                const transaction = this.db.transaction(['quotes'], 'readonly');
-                const store = transaction.objectStore('quotes');
-                
-                const quotes = await new Promise((resolve, reject) => {
-                    const request = store.getAll();
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
-                });
-                
-                this.quotes = quotes || [];
+                this.quotes = (await this.idb('quotes', 'readonly', (store) => store.getAll())) || [];
             } else {
-                // Fallback to localStorage
                 const saved = localStorage.getItem('kuot_quotes');
                 this.quotes = saved ? JSON.parse(saved) : [];
             }
@@ -167,28 +176,25 @@ class KuotApp {
             console.error('Error loading quotes:', error);
             this.quotes = [];
         }
+        // Stesso ordine del database (id crescente), sempre.
+        this.quotes.sort((a, b) => a.id - b.id);
     }
 
     async saveSettings() {
         const settings = {
             theme: this.currentTheme,
             dailyQuoteDate: this.dailyQuoteDate,
-            dailyQuoteIndex: this.dailyQuoteIndex,
-            usedQuoteIndexes: this.usedQuoteIndexes
+            dailyQuoteId: this.dailyQuoteId,
+            usedQuoteIds: this.usedQuoteIds
         };
-
         try {
             if (this.useIndexedDB) {
-                const transaction = this.db.transaction(['settings'], 'readwrite');
-                const store = transaction.objectStore('settings');
-                
-                for (const [key, value] of Object.entries(settings)) {
-                    await new Promise((resolve, reject) => {
-                        const request = store.put({ key, value });
-                        request.onsuccess = () => resolve();
-                        request.onerror = () => reject(request.error);
-                    });
-                }
+                await this.idb('settings', 'readwrite', (store) => {
+                    for (const [key, value] of Object.entries(settings)) store.put({ key, value });
+                    // Le chiavi della versione a indici non servono piu'.
+                    store.delete('dailyQuoteIndex');
+                    store.delete('usedQuoteIndexes');
+                });
             } else {
                 localStorage.setItem('kuot_settings', JSON.stringify(settings));
             }
@@ -203,72 +209,65 @@ class KuotApp {
     }
 
     async loadSettings() {
+        let settings = {};
         try {
-            let settings = {};
-            
             if (this.useIndexedDB) {
-                const transaction = this.db.transaction(['settings'], 'readonly');
-                const store = transaction.objectStore('settings');
-                
-                const keys = ['theme', 'dailyQuoteDate', 'dailyQuoteIndex', 'usedQuoteIndexes'];
-                for (const key of keys) {
-                    const result = await new Promise((resolve, reject) => {
-                        const request = store.get(key);
-                        request.onsuccess = () => resolve(request.result);
-                        request.onerror = () => reject(request.error);
-                    });
-                    if (result) {
-                        settings[key] = result.value;
-                    }
-                }
+                const righe = (await this.idb('settings', 'readonly', (store) => store.getAll())) || [];
+                for (const r of righe) settings[r.key] = r.value;
             } else {
                 const saved = localStorage.getItem('kuot_settings');
                 settings = saved ? JSON.parse(saved) : {};
             }
-
-            this.currentTheme = settings.theme || 'serene';
-            this.dailyQuoteDate = settings.dailyQuoteDate;
-            this.dailyQuoteIndex = settings.dailyQuoteIndex || -1;
-            this.usedQuoteIndexes = settings.usedQuoteIndexes || [];
         } catch (error) {
             console.error('Error loading settings:', error);
         }
+
+        this.currentTheme = settings.theme || 'serene';
+        this.dailyQuoteDate = settings.dailyQuoteDate || null;
+
+        if (settings.dailyQuoteId !== undefined || settings.usedQuoteIds !== undefined) {
+            this.dailyQuoteId = settings.dailyQuoteId ?? null;
+            this.usedQuoteIds = settings.usedQuoteIds || [];
+        } else {
+            // Passaggio dalla versione a indici. Gli indici erano posizioni
+            // nell'elenco cosi' come esce dal database (id crescente), che e'
+            // lo stesso ordine di this.quotes adesso.
+            const idDi = (i) => (Number.isInteger(i) && this.quotes[i]) ? this.quotes[i].id : null;
+            this.dailyQuoteId = idDi(settings.dailyQuoteIndex);
+            this.usedQuoteIds = (settings.usedQuoteIndexes || []).map(idDi).filter((id) => id !== null);
+        }
+    }
+
+    getQuote(id) {
+        return this.quotes.find((q) => q.id === id) || null;
     }
 
     // ===== IMAGE PROCESSING =====
     processImage(file, maxSize = 800, quality = 0.8) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
-            
             img.onload = () => {
-                // Calculate dimensions
                 let { width, height } = img;
                 const maxDimension = Math.max(width, height);
-                
                 if (maxDimension > maxSize) {
                     const ratio = maxSize / maxDimension;
-                    width *= ratio;
-                    height *= ratio;
+                    width = Math.round(width * ratio);
+                    height = Math.round(height * ratio);
                 }
-                
-                // Set canvas size
                 canvas.width = width;
                 canvas.height = height;
-                
-                // Draw and compress
                 ctx.drawImage(img, 0, 0, width, height);
-                
-                // Convert to blob
+                URL.revokeObjectURL(img.src);
                 canvas.toBlob(resolve, 'image/jpeg', quality);
             };
-            
+            img.onerror = reject;
             img.src = URL.createObjectURL(file);
         });
     }
 
-    async imageToDataURL(blob) {
+    imageToDataURL(blob) {
         return new Promise((resolve) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
@@ -279,106 +278,92 @@ class KuotApp {
     // ===== DAILY QUOTE LOGIC =====
     updateDailyQuote() {
         const today = new Date().toDateString();
-        
-        // Check if we need a new daily quote
-        if (this.dailyQuoteDate !== today || this.dailyQuoteIndex === -1) {
+        if (this.dailyQuoteDate !== today || !this.getQuote(this.dailyQuoteId)) {
             this.generateDailyQuote();
             this.dailyQuoteDate = today;
             this.saveSettings();
         }
-        
         this.displayDailyQuote();
     }
 
     generateDailyQuote() {
         if (this.quotes.length === 0) {
-            this.dailyQuoteIndex = -1;
+            this.dailyQuoteId = null;
             return;
         }
-        
-        // If we've used all quotes, reset the deck
-        if (this.usedQuoteIndexes.length >= this.quotes.length) {
-            this.usedQuoteIndexes = [];
+        const esistenti = new Set(this.quotes.map((q) => q.id));
+        this.usedQuoteIds = this.usedQuoteIds.filter((id) => esistenti.has(id));
+
+        let available = this.quotes.filter((q) => !this.usedQuoteIds.includes(q.id));
+        if (available.length === 0) {
+            this.usedQuoteIds = [];
+            available = this.quotes;
         }
-        
-        // Find available quotes
-        const availableIndexes = this.quotes
-            .map((_, index) => index)
-            .filter(index => !this.usedQuoteIndexes.includes(index));
-        
-        if (availableIndexes.length === 0) {
-            this.usedQuoteIndexes = [];
-            this.dailyQuoteIndex = Math.floor(Math.random() * this.quotes.length);
-        } else {
-            this.dailyQuoteIndex = availableIndexes[Math.floor(Math.random() * availableIndexes.length)];
-        }
-        
-        this.usedQuoteIndexes.push(this.dailyQuoteIndex);
+        this.dailyQuoteId = available[Math.floor(Math.random() * available.length)].id;
+        this.usedQuoteIds.push(this.dailyQuoteId);
     }
 
-    displayDailyQuote() {
-        const container = document.getElementById('dailyQuote');
-        
-        if (this.quotes.length === 0 || this.dailyQuoteIndex === -1) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">💭</div>
-                    <h2>Waiting for Quotes</h2>
-                    <p>Start your collection of wisdom</p>
-                    <button class="cta-button" onclick="app.switchTab('add')">Add Your First Quote</button>
-                </div>
-            `;
-            return;
-        }
-        
-        const quote = this.quotes[this.dailyQuoteIndex];
-        const authorInitials = this.getAuthorInitials(quote.author);
-        
-        container.innerHTML = `
-            <div class="quote-content fade-in">
+    // Il blocco citazione usato sia in Home sia nella scheda.
+    quoteContentHTML(quote, extraClass = '') {
+        const id = quote.id;
+        return `
+            <div class="quote-content ${extraClass}">
                 <div class="quote-text">${this.escapeHtml(quote.text)}</div>
                 <div class="quote-meta">
-                    ${quote.photo ? 
-                        `<img src="${quote.photo}" alt="${quote.author}" class="author-photo clickable-image" onclick="app.openImageModal('${quote.photo}', '${this.escapeHtml(quote.author)}')">` :
-                        `<div class="author-initials">${authorInitials}</div>`
-                    }
+                    ${quote.photo
+                        ? `<img src="${quote.photo}" alt="${this.escapeHtml(quote.author)}" class="author-photo clickable-image" data-action="photo" data-id="${id}">`
+                        : `<div class="author-initials">${this.escapeHtml(this.getAuthorInitials(quote.author))}</div>`}
                     <div class="author-info">
                         <div class="author-name">${this.escapeHtml(quote.author)}</div>
-                        <div class="quote-date">${this.formatDate(quote.date)}</div>
+                        <div class="quote-date">${this.escapeHtml(this.formatDate(quote.date))}</div>
                     </div>
                 </div>
                 <div class="quote-actions">
-                    <button class="action-btn favorite ${quote.favorite ? 'active' : ''}" 
-                            onclick="app.toggleFavorite(${this.dailyQuoteIndex})">
+                    <button class="action-btn favorite ${quote.favorite ? 'active' : ''}" data-action="favorite" data-id="${id}">
                         <span>${quote.favorite ? '★' : '☆'}</span>
-                        Favorite
+                        Preferita
                     </button>
-                    <button class="action-btn" onclick="app.openEditModal(${this.dailyQuoteIndex})">
+                    <button class="action-btn" data-action="edit" data-id="${id}">
                         <span>✏️</span>
-                        Edit
+                        Modifica
                     </button>
-                    <button class="action-btn" onclick="app.shareQuote(${this.dailyQuoteIndex})">
+                    <button class="action-btn" data-action="share" data-id="${id}">
                         <span>📤</span>
-                        Share
+                        Condividi
                     </button>
                 </div>
             </div>
         `;
     }
 
+    displayDailyQuote() {
+        const container = document.getElementById('dailyQuote');
+        const quote = this.getQuote(this.dailyQuoteId);
+
+        if (!quote) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">💭</div>
+                    <h2>Nessuna citazione</h2>
+                    <p>Comincia la tua raccolta</p>
+                    <button class="cta-button" onclick="app.switchTab('add')">Aggiungi la prima citazione</button>
+                </div>
+            `;
+            return;
+        }
+        container.innerHTML = this.quoteContentHTML(quote, 'fade-in');
+    }
+
     // ===== NAVIGATION =====
     switchTab(tabName) {
-        // Update navigation
         document.querySelectorAll('.nav-item').forEach(item => {
             item.classList.toggle('active', item.dataset.tab === tabName);
         });
-        
-        // Update screens
         document.querySelectorAll('.screen').forEach(screen => {
             screen.classList.toggle('active', screen.id === `${tabName}Screen`);
         });
-        
-        // Load content for specific tabs
+        window.scrollTo(0, 0);
+
         if (tabName === 'library') {
             this.updateLibraryView();
         } else if (tabName === 'add') {
@@ -386,164 +371,281 @@ class KuotApp {
         }
     }
 
-    // ===== ADD QUOTE FUNCTIONALITY =====
+    // ===== EVENT LISTENERS =====
     setupEventListeners() {
-        // Form submission
         document.getElementById('addQuoteForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.addQuote();
         });
-        
-        // Edit form submission
         document.getElementById('editQuoteForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.saveEditedQuote();
         });
-        
-        // Character counter
-        const quoteTextarea = document.getElementById('quoteText');
-        quoteTextarea.addEventListener('input', this.updateCharCounter);
-        
-        // Character counter for edit form
-        const editQuoteTextarea = document.getElementById('editQuoteText');
-        editQuoteTextarea.addEventListener('input', this.updateEditCharCounter);
-        
-        // Photo upload
-        document.getElementById('photoInput').addEventListener('change', this.handlePhotoUpload.bind(this));
-        
-        // Edit photo upload
-        document.getElementById('editPhotoInput').addEventListener('change', this.handleEditPhotoUpload.bind(this));
-        
-        // Search and filters
-        document.getElementById('searchInput').addEventListener('input', this.handleSearch.bind(this));
-        document.getElementById('sortSelect').addEventListener('change', this.handleSort.bind(this));
-        
-        // Filter chips
+
+        document.getElementById('quoteText').addEventListener('input', () => this.updateCharCounter());
+        document.getElementById('editQuoteText').addEventListener('input', () => this.updateEditCharCounter());
+
+        document.getElementById('photoInput').addEventListener('change', (e) => this.handlePhotoUpload('add', e));
+        document.getElementById('editPhotoInput').addEventListener('change', (e) => this.handlePhotoUpload('edit', e));
+
+        // Foto dell'autore riproposta mentre si scrive il nome.
+        document.getElementById('authorName').addEventListener('input', () => this.suggestAuthorPhoto('add'));
+        document.getElementById('editAuthorName').addEventListener('input', () => this.suggestAuthorPhoto('edit'));
+
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            this.searchQuery = e.target.value.trim();
+            this.updateLibraryView();
+        });
+        document.getElementById('sortSelect').addEventListener('change', (e) => {
+            this.currentSort = e.target.value;
+            this.updateLibraryView();
+        });
+
         document.querySelectorAll('.chip').forEach(chip => {
             chip.addEventListener('click', (e) => {
                 document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-                e.target.classList.add('active');
-                this.currentFilter = e.target.dataset.filter;
+                e.currentTarget.classList.add('active');
+                this.currentFilter = e.currentTarget.dataset.filter;
                 this.updateLibraryView();
             });
         });
-        
-        // Theme selector
+
         document.querySelectorAll('.theme-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const theme = e.currentTarget.dataset.theme;
-                this.setTheme(theme);
-            });
+            btn.addEventListener('click', (e) => this.setTheme(e.currentTarget.dataset.theme));
         });
-        
-        // Set current year as default
-        const currentYear = new Date().getFullYear();
-        document.getElementById('quoteDate').value = currentYear.toString();
-        
-        // Add date input formatting
-        document.getElementById('quoteDate').addEventListener('blur', this.formatDateInput.bind(this));
-        document.getElementById('editQuoteDate').addEventListener('blur', this.formatDateInput.bind(this));
+
+        // Un solo ascoltatore per tutti i pulsanti dentro le citazioni: i
+        // pulsanti portano l'id della citazione in data-id, cosi' nell'HTML
+        // non finiscono ne' nomi con apostrofi ne' foto intere.
+        const azioni = (e) => {
+            const el = e.target.closest('[data-action]');
+            if (!el) return;
+            e.stopPropagation();
+            const id = Number(el.dataset.id);
+            switch (el.dataset.action) {
+                case 'favorite': this.toggleFavorite(id); break;
+                case 'edit': this.openEditModal(id); break;
+                case 'delete': this.deleteQuote(id); break;
+                case 'share': this.shareQuote(id); break;
+                case 'photo': this.openImageModal(id); break;
+                case 'open': this.openQuoteModal(id); break;
+            }
+        };
+        ['dailyQuote', 'quotesGrid', 'modalQuoteContent'].forEach((id) => {
+            document.getElementById(id).addEventListener('click', azioni);
+        });
+
+        // Scheda: scorrimento orizzontale col dito per passare alla vicina.
+        const detail = document.querySelector('#quoteModal .modal-content');
+        let x0 = null, y0 = null;
+        detail.addEventListener('touchstart', (e) => {
+            x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+        }, { passive: true });
+        detail.addEventListener('touchend', (e) => {
+            if (x0 === null) return;
+            const dx = e.changedTouches[0].clientX - x0;
+            const dy = e.changedTouches[0].clientY - y0;
+            x0 = null;
+            if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                this.navigateQuote(dx < 0 ? 1 : -1);
+            }
+        }, { passive: true });
+
+        // Foto a tutto schermo: si chiude toccando lo sfondo o con Esc.
+        const imageModal = document.getElementById('imageModal');
+        imageModal.addEventListener('click', (e) => {
+            if (e.target === imageModal || e.target.classList.contains('image-modal-content')) {
+                this.closeImageModal();
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (imageModal.classList.contains('active')) this.closeImageModal();
+            else if (document.getElementById('editQuoteModal').classList.contains('active')) this.closeEditModal();
+            else if (document.getElementById('quoteModal').classList.contains('active')) this.closeQuoteModal();
+        });
+
+        document.getElementById('quoteDate').value = new Date().getFullYear().toString();
+        document.getElementById('quoteDate').addEventListener('blur', (e) => this.formatDateInput(e));
+        document.getElementById('editQuoteDate').addEventListener('blur', (e) => this.formatDateInput(e));
     }
 
     updateCharCounter() {
         const textarea = document.getElementById('quoteText');
-        const counter = document.querySelector('.char-counter');
+        const counter = document.querySelector('#addQuoteForm .char-counter');
         const current = textarea.value.length;
         const max = textarea.getAttribute('maxlength');
-        
         counter.textContent = `${current}/${max}`;
         counter.style.color = current > max * 0.9 ? 'var(--warning)' : 'var(--text-secondary)';
     }
 
-    async handlePhotoUpload(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-        
-        try {
-            // Process image
-            const processedBlob = await this.processImage(file);
-            const dataURL = await this.imageToDataURL(processedBlob);
-            
-            // Show preview
-            const placeholder = document.querySelector('.photo-placeholder');
-            const preview = document.querySelector('.photo-preview');
-            const previewImg = document.getElementById('photoPreview');
-            
-            placeholder.style.display = 'none';
-            preview.style.display = 'block';
-            previewImg.src = dataURL;
-            
-            // Store processed image data
-            this.tempPhotoData = dataURL;
-        } catch (error) {
-            console.error('Error processing image:', error);
-            this.showError('Failed to process image');
+    updateEditCharCounter() {
+        const textarea = document.getElementById('editQuoteText');
+        const counter = document.querySelector('#editQuoteForm .char-counter');
+        const current = textarea.value.length;
+        const max = textarea.getAttribute('maxlength');
+        counter.textContent = `${current}/${max}`;
+        counter.style.color = current > max * 0.9 ? 'var(--warning)' : 'var(--text-secondary)';
+    }
+
+    // ===== AUTHOR PHOTO REUSE =====
+
+    // Chiave per riconoscere lo stesso autore scritto in modi un po' diversi:
+    // maiuscole, accenti, punto finale e note tra parentesi non contano
+    // ("Antoine de Saint-Exupéry (attribuzione popolare)" = "antoine de saint-exupery").
+    authorKey(name) {
+        return String(name || '')
+            .normalize('NFD').replace(/[̀-ͯ]/g, '')
+            .toLowerCase()
+            .replace(/\([^)]*\)/g, ' ')
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+    }
+
+    // La foto piu' recente fra le citazioni dello stesso autore.
+    findAuthorPhoto(name, escludiId = null) {
+        const key = this.authorKey(name);
+        if (!key) return null;
+        let migliore = null;
+        for (const q of this.quotes) {
+            if (!q.photo || q.id === escludiId || this.authorKey(q.author) !== key) continue;
+            const t = q.updatedAt || q.createdAt || '';
+            if (!migliore || t > migliore.t) migliore = { photo: q.photo, author: q.author, t };
+        }
+        return migliore;
+    }
+
+    photoElements(form) {
+        if (form === 'add') {
+            return {
+                placeholder: document.getElementById('addPhotoPlaceholder'),
+                preview: document.getElementById('addPhotoPreview'),
+                img: document.getElementById('photoPreview'),
+                note: document.getElementById('addPhotoNote'),
+                input: document.getElementById('photoInput'),
+                author: document.getElementById('authorName')
+            };
+        }
+        return {
+            placeholder: document.getElementById('editPhotoPlaceholder'),
+            preview: document.getElementById('editPhotoPreview'),
+            img: document.getElementById('editPhotoPreviewImg'),
+            note: document.getElementById('editPhotoNote'),
+            input: document.getElementById('editPhotoInput'),
+            author: document.getElementById('editAuthorName')
+        };
+    }
+
+    setFormPhoto(form, data, origine, nota = '') {
+        const st = this.photoState[form];
+        const el = this.photoElements(form);
+        st.data = data;
+        st.origine = data ? origine : null;
+        el.placeholder.style.display = data ? 'none' : 'flex';
+        el.preview.style.display = data ? 'inline-block' : 'none';
+        if (data) el.img.src = data; else el.img.removeAttribute('src');
+        el.note.textContent = nota;
+        el.note.hidden = !nota;
+    }
+
+    suggestAuthorPhoto(form) {
+        const st = this.photoState[form];
+        const el = this.photoElements(form);
+        // Una foto scelta a mano, o quella che la citazione aveva gia', non si tocca.
+        if (st.origine === 'manuale' || st.origine === 'citazione') return;
+
+        const key = this.authorKey(el.author.value);
+        const escludi = form === 'edit' ? this.currentEditId : null;
+        const trovata = key && st.rifiutataPer !== key ? this.findAuthorPhoto(el.author.value, escludi) : null;
+
+        if (trovata) {
+            if (st.data !== trovata.photo) {
+                this.setFormPhoto(form, trovata.photo, 'autore', `Foto già usata per ${trovata.author}`);
+            }
+        } else if (st.origine === 'autore') {
+            this.setFormPhoto(form, null, null);
         }
     }
 
-    removePhoto(event) {
-        event.stopPropagation();
-        
-        const placeholder = document.querySelector('.photo-placeholder');
-        const preview = document.querySelector('.photo-preview');
-        
-        placeholder.style.display = 'flex';
-        preview.style.display = 'none';
-        
-        document.getElementById('photoInput').value = '';
-        delete this.tempPhotoData;
+    async handlePhotoUpload(form, event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        try {
+            const processedBlob = await this.processImage(file);
+            const dataURL = await this.imageToDataURL(processedBlob);
+            this.setFormPhoto(form, dataURL, 'manuale');
+        } catch (error) {
+            console.error('Error processing image:', error);
+            this.showError("Non riesco a leggere l'immagine");
+        }
     }
 
+    removeFormPhoto(form, event) {
+        event.stopPropagation();
+        const st = this.photoState[form];
+        const el = this.photoElements(form);
+        // Tolta una foto riproposta: per questo autore non la si ripropone piu'
+        // finche' il modulo resta aperto.
+        if (st.origine === 'autore') st.rifiutataPer = this.authorKey(el.author.value);
+        el.input.value = '';
+        this.setFormPhoto(form, null, null);
+    }
+
+    // Elenco degli autori gia' presenti, per il completamento del nome.
+    updateAuthorList() {
+        const list = document.getElementById('authorList');
+        if (!list) return;
+        const visti = new Map();
+        for (const q of this.quotes) {
+            const k = this.authorKey(q.author);
+            if (k && !visti.has(k)) visti.set(k, q.author.trim());
+        }
+        const nomi = [...visti.values()].sort((a, b) => a.localeCompare(b, 'it'));
+        list.innerHTML = nomi.map((n) => `<option value="${this.escapeHtml(n)}"></option>`).join('');
+    }
+
+    // ===== ADD QUOTE =====
     async addQuote() {
         const form = document.getElementById('addQuoteForm');
         const submitBtn = form.querySelector('.submit-btn');
-        
-        // Get form data
         const text = document.getElementById('quoteText').value.trim();
         const author = document.getElementById('authorName').value.trim();
-        const date = document.getElementById('quoteDate').value;
-        
-        // Validate
+        const date = document.getElementById('quoteDate').value.trim();
+
         if (!text || !author) {
-            this.showError('Please fill in all required fields');
+            this.showError('Servono sia la citazione sia l\'autore');
             return;
         }
-        
+
         try {
             submitBtn.classList.add('loading');
             submitBtn.disabled = true;
-            
-            // Create quote object
+
+            const anno = new Date().getFullYear().toString();
             const quote = {
                 id: Date.now(),
                 text,
                 author,
-                date: date || new Date().getFullYear().toString(),
-                dateStandardized: this.standardizeDate(date || new Date().getFullYear().toString()),
-                photo: this.tempPhotoData || null,
+                date: date || anno,
+                dateStandardized: this.standardizeDate(date || anno),
+                photo: this.photoState.add.data || null,
                 favorite: false,
                 createdAt: new Date().toISOString()
             };
-            
-            // Add to quotes array
-            this.quotes.unshift(quote);
-            
-            // Save to storage
-            await this.saveQuotes();
-            
-            // Reset form and switch to library
+
+            this.quotes.push(quote);
+            await this.putQuote(quote);
+
             this.resetAddForm();
+            this.updateAuthorList();
             this.switchTab('library');
-            
-            // Update daily quote if this is the first quote
-            if (this.quotes.length === 1) {
-                this.updateDailyQuote();
-            }
-            
-            this.showSuccess('Quote added successfully!');
+
+            if (this.quotes.length === 1) this.updateDailyQuote();
+
+            this.showSuccess('Citazione salvata');
         } catch (error) {
             console.error('Error adding quote:', error);
-            this.showError('Failed to add quote');
+            this.showError('Non sono riuscito a salvare la citazione');
         } finally {
             submitBtn.classList.remove('loading');
             submitBtn.disabled = false;
@@ -552,19 +654,9 @@ class KuotApp {
 
     resetAddForm() {
         document.getElementById('addQuoteForm').reset();
-        
-        const placeholder = document.querySelector('.photo-placeholder');
-        const preview = document.querySelector('.photo-preview');
-        
-        placeholder.style.display = 'flex';
-        preview.style.display = 'none';
-        
-        delete this.tempPhotoData;
-        
-        // Set current year as default
-        const currentYear = new Date().getFullYear();
-        document.getElementById('quoteDate').value = currentYear.toString();
-        
+        this.photoState.add = { data: null, origine: null, rifiutataPer: null };
+        this.setFormPhoto('add', null, null);
+        document.getElementById('quoteDate').value = new Date().getFullYear().toString();
         this.updateCharCounter();
     }
 
@@ -574,193 +666,196 @@ class KuotApp {
         this.renderQuotesGrid();
     }
 
+    normalizza(testo) {
+        return String(testo || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    }
+
     applyFiltersAndSort() {
         let filtered = [...this.quotes];
-        
-        // Apply search filter
+
         if (this.searchQuery) {
-            const query = this.searchQuery.toLowerCase();
-            filtered = filtered.filter(quote => 
-                quote.text.toLowerCase().includes(query) ||
-                quote.author.toLowerCase().includes(query)
+            const query = this.normalizza(this.searchQuery);
+            filtered = filtered.filter(quote =>
+                this.normalizza(quote.text).includes(query) ||
+                this.normalizza(quote.author).includes(query)
             );
         }
-        
-        // Apply category filter
+
+        const perAggiunta = (a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || b.id - a.id;
+
         switch (this.currentFilter) {
             case 'favorites':
                 filtered = filtered.filter(quote => quote.favorite);
                 break;
             case 'recent':
-                const weekAgo = new Date();
-                weekAgo.setDate(weekAgo.getDate() - 7);
-                filtered = filtered.filter(quote => new Date(quote.createdAt) > weekAgo);
+                // Le ultime aggiunte, non "quelle degli ultimi 7 giorni": cosi'
+                // il filtro non resta vuoto quando per una settimana non si
+                // aggiunge niente.
+                filtered = [...filtered].sort(perAggiunta).slice(0, RECENTI_QUANTE);
                 break;
         }
-        
-        // Apply sorting
+
         switch (this.currentSort) {
             case 'alphabetical':
-                filtered.sort((a, b) => a.text.localeCompare(b.text));
+                filtered.sort((a, b) => a.text.localeCompare(b.text, 'it'));
                 break;
             case 'random':
-                filtered = this.shuffleArray([...filtered]);
+                filtered = this.shuffleArray(filtered);
                 break;
             case 'recent':
             default:
-                filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                filtered.sort(perAggiunta);
                 break;
         }
-        
+
         this.filteredQuotes = filtered;
     }
 
     renderQuotesGrid() {
         const container = document.getElementById('quotesGrid');
-        
+
         if (this.filteredQuotes.length === 0) {
-            const emptyMessage = this.quotes.length === 0 ? 
-                'No quotes yet' : 
-                `No quotes found${this.searchQuery ? ` for "${this.searchQuery}"` : ''}`;
-            
+            let titolo, testo;
+            if (this.quotes.length === 0) {
+                titolo = 'Ancora nessuna citazione';
+                testo = 'La tua raccolta comparirà qui';
+            } else if (this.searchQuery) {
+                titolo = `Niente per «${this.escapeHtml(this.searchQuery)}»`;
+                testo = 'Prova con un’altra parola o togli i filtri';
+            } else if (this.currentFilter === 'favorites') {
+                titolo = 'Nessuna preferita';
+                testo = 'Tocca ☆ su una citazione per segnarla';
+            } else {
+                titolo = 'Nessuna citazione';
+                testo = 'Prova a togliere i filtri';
+            }
             container.innerHTML = `
                 <div class="empty-state">
                     <div class="empty-icon">📚</div>
-                    <h2>${emptyMessage}</h2>
-                    <p>${this.quotes.length === 0 ? 'Your collection will appear here' : 'Try adjusting your search or filters'}</p>
+                    <h2>${titolo}</h2>
+                    <p>${testo}</p>
                 </div>
             `;
             return;
         }
-        
-        container.innerHTML = this.filteredQuotes.map((quote, index) => {
-            const originalIndex = this.quotes.indexOf(quote);
-            const authorInitials = this.getAuthorInitials(quote.author);
-            
+
+        container.innerHTML = this.filteredQuotes.map((quote) => {
+            const id = quote.id;
             return `
-                <div class="quote-card" onclick="app.openQuoteModal(${originalIndex})">
-                    <div class="quote-card-actions">
-                        <button class="card-action-btn favorite ${quote.favorite ? 'active' : ''}" 
-                                onclick="app.toggleFavorite(${originalIndex}, event)">
-                            ${quote.favorite ? '★' : '☆'}
-                        </button>
-                        <button class="card-action-btn edit" 
-                                onclick="app.openEditModal(${originalIndex}, event)">
-                            ✏️
-                        </button>
-                        <button class="card-action-btn delete" 
-                                onclick="app.deleteQuote(${originalIndex}, event)">
-                            🗑️
-                        </button>
+                <div class="quote-card" data-action="open" data-id="${id}">
+                    <div class="quote-card-top">
+                        <div class="quote-card-date">${this.escapeHtml(this.formatDate(quote.date))}</div>
+                        <div class="quote-card-actions">
+                            <button class="card-action-btn favorite ${quote.favorite ? 'active' : ''}" data-action="favorite" data-id="${id}" aria-label="Preferita">${quote.favorite ? '★' : '☆'}</button>
+                            <button class="card-action-btn edit" data-action="edit" data-id="${id}" aria-label="Modifica">✏️</button>
+                            <button class="card-action-btn delete" data-action="delete" data-id="${id}" aria-label="Elimina">🗑️</button>
+                        </div>
                     </div>
                     <div class="quote-card-text">${this.escapeHtml(quote.text)}</div>
                     <div class="quote-card-meta">
-                        ${quote.photo ? 
-                            `<img src="${quote.photo}" alt="${quote.author}" class="quote-card-photo clickable-image" onclick="app.openImageModal('${quote.photo}', '${this.escapeHtml(quote.author)}'); event.stopPropagation();">` :
-                            `<div class="quote-card-initials">${authorInitials}</div>`
-                        }
+                        ${quote.photo
+                            ? `<img src="${quote.photo}" alt="" class="quote-card-photo clickable-image" data-action="photo" data-id="${id}" loading="lazy">`
+                            : `<div class="quote-card-initials">${this.escapeHtml(this.getAuthorInitials(quote.author))}</div>`}
                         <div class="quote-card-author">${this.escapeHtml(quote.author)}</div>
-                        <div class="quote-card-date">${this.formatDate(quote.date)}</div>
                     </div>
                 </div>
             `;
         }).join('');
     }
 
-    handleSearch(event) {
-        this.searchQuery = event.target.value.trim();
-        this.updateLibraryView();
-    }
-
-    handleSort(event) {
-        this.currentSort = event.target.value;
-        this.updateLibraryView();
-    }
-
     // ===== QUOTE MANAGEMENT =====
-    async toggleFavorite(index, event = null) {
-        if (event) {
-            event.stopPropagation();
-        }
-        
-        if (index >= 0 && index < this.quotes.length) {
-            this.quotes[index].favorite = !this.quotes[index].favorite;
-            await this.saveQuotes();
-            
-            // Update displays
-            this.updateLibraryView();
-            if (index === this.dailyQuoteIndex) {
-                this.displayDailyQuote();
-            }
+    async toggleFavorite(id) {
+        const quote = this.getQuote(id);
+        if (!quote) return;
+        quote.favorite = !quote.favorite;
+        await this.putQuote(quote);
+        this.refreshViews(id);
+    }
+
+    // Ridisegna le viste in cui compare la citazione.
+    refreshViews(id) {
+        this.updateLibraryView();
+        if (id === this.dailyQuoteId) this.displayDailyQuote();
+        if (document.getElementById('quoteModal').classList.contains('active') &&
+            this.modalIds[this.modalPos] === id) {
+            this.renderModalQuote();
         }
     }
 
-    async deleteQuote(index, event) {
-        event.stopPropagation();
-        
-        if (!confirm('Are you sure you want to delete this quote?')) {
-            return;
-        }
-        
+    async deleteQuote(id) {
+        const quote = this.getQuote(id);
+        if (!quote) return;
+        if (!confirm(`Eliminare la citazione di ${quote.author}?`)) return;
+
         try {
-            this.quotes.splice(index, 1);
-            await this.saveQuotes();
-            
-            // Update daily quote if necessary
-            if (index === this.dailyQuoteIndex) {
+            this.quotes = this.quotes.filter((q) => q.id !== id);
+            await this.removeQuoteFromStorage(id);
+
+            this.usedQuoteIds = this.usedQuoteIds.filter((u) => u !== id);
+            if (id === this.dailyQuoteId) {
                 this.generateDailyQuote();
                 this.displayDailyQuote();
-            } else if (index < this.dailyQuoteIndex) {
-                this.dailyQuoteIndex--;
             }
-            
-            // Remove from used indexes
-            this.usedQuoteIndexes = this.usedQuoteIndexes
-                .map(i => i > index ? i - 1 : i)
-                .filter(i => i !== index);
-            
             await this.saveSettings();
+
             this.updateLibraryView();
-            
-            this.showSuccess('Quote deleted successfully');
+            this.updateAuthorList();
+            this.showSuccess('Citazione eliminata');
         } catch (error) {
             console.error('Error deleting quote:', error);
-            this.showError('Failed to delete quote');
+            this.showError('Non sono riuscito a eliminarla');
         }
     }
 
-    shareQuote(index) {
-        const quote = this.quotes[index];
+    async shareQuote(id) {
+        const quote = this.getQuote(id);
         if (!quote) return;
-        
-        const shareText = `"${quote.text}" - ${quote.author}`;
-        
+        const shareText = `«${quote.text}» — ${quote.author}`;
+
         if (navigator.share) {
-            navigator.share({
-                title: 'Kuot Quote',
-                text: shareText
-            });
-        } else {
-            // Fallback: copy to clipboard
-            navigator.clipboard.writeText(shareText).then(() => {
-                this.showSuccess('Quote copied to clipboard!');
-            }).catch(() => {
-                this.showError('Failed to copy quote');
-            });
+            try {
+                await navigator.share({ title: 'Kuot', text: shareText });
+                return;
+            } catch (e) {
+                if (e && e.name === 'AbortError') return;
+            }
         }
+        if (await this.copyText(shareText)) {
+            this.showSuccess('Citazione copiata');
+        } else {
+            this.showError('Non riesco a copiarla');
+        }
+    }
+
+    async copyText(testo) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(testo);
+                return true;
+            }
+        } catch (e) { /* si prova sotto */ }
+        const area = document.createElement('textarea');
+        area.value = testo;
+        area.setAttribute('readonly', '');
+        area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+        document.body.appendChild(area);
+        area.select();
+        let fatto = false;
+        try { fatto = document.execCommand('copy'); } catch (e) { fatto = false; }
+        area.remove();
+        return fatto;
     }
 
     // ===== QUOTE MODAL =====
-    openQuoteModal(index) {
-        this.currentQuoteIndex = index;
-        const modal = document.getElementById('quoteModal');
-        const content = document.getElementById('modalQuoteContent');
-        
+    openQuoteModal(id) {
+        this.modalIds = this.filteredQuotes.map((q) => q.id);
+        this.modalPos = this.modalIds.indexOf(id);
+        if (this.modalPos === -1) {
+            this.modalIds = [id];
+            this.modalPos = 0;
+        }
         this.renderModalQuote();
-        modal.classList.add('active');
-        
-        // Update navigation buttons
-        this.updateModalNavigation();
+        document.getElementById('quoteModal').classList.add('active');
     }
 
     closeQuoteModal() {
@@ -768,65 +863,24 @@ class KuotApp {
     }
 
     navigateQuote(direction) {
-        const newIndex = this.currentQuoteIndex + direction;
-        
-        if (newIndex >= 0 && newIndex < this.filteredQuotes.length) {
-            const originalIndex = this.quotes.indexOf(this.filteredQuotes[newIndex]);
-            this.currentQuoteIndex = originalIndex;
-            this.renderModalQuote();
-            this.updateModalNavigation();
-        }
+        const nuova = this.modalPos + direction;
+        if (nuova < 0 || nuova >= this.modalIds.length) return;
+        this.modalPos = nuova;
+        this.renderModalQuote();
     }
 
     renderModalQuote() {
-        const quote = this.quotes[this.currentQuoteIndex];
-        if (!quote) return;
-        
-        const authorInitials = this.getAuthorInitials(quote.author);
         const content = document.getElementById('modalQuoteContent');
-        
-        content.innerHTML = `
-            <div class="quote-content">
-                <div class="quote-text">${this.escapeHtml(quote.text)}</div>
-                <div class="quote-meta">
-                    ${quote.photo ? 
-                        `<img src="${quote.photo}" alt="${quote.author}" class="author-photo clickable-image" onclick="app.openImageModal('${quote.photo}', '${this.escapeHtml(quote.author)}')">` :
-                        `<div class="author-initials">${authorInitials}</div>`
-                    }
-                    <div class="author-info">
-                        <div class="author-name">${this.escapeHtml(quote.author)}</div>
-                        <div class="quote-date">${this.formatDate(quote.date)}</div>
-                    </div>
-                </div>
-                <div class="quote-actions">
-                    <button class="action-btn favorite ${quote.favorite ? 'active' : ''}" 
-                            onclick="app.toggleFavorite(${this.currentQuoteIndex})">
-                        <span>${quote.favorite ? '★' : '☆'}</span>
-                        Favorite
-                    </button>
-                    <button class="action-btn" onclick="app.openEditModal(${this.currentQuoteIndex})">
-                        <span>✏️</span>
-                        Edit
-                    </button>
-                    <button class="action-btn" onclick="app.shareQuote(${this.currentQuoteIndex})">
-                        <span>📤</span>
-                        Share
-                    </button>
-                </div>
-            </div>
-        `;
-    }
+        const quote = this.getQuote(this.modalIds[this.modalPos]);
+        if (!quote) return;
+        content.innerHTML = this.quoteContentHTML(quote);
+        content.parentElement.scrollTop = 0;
 
-    updateModalNavigation() {
-        const currentFilteredIndex = this.filteredQuotes.findIndex(q => 
-            this.quotes.indexOf(q) === this.currentQuoteIndex
-        );
-        
-        const prevBtn = document.querySelector('.nav-btn.prev');
-        const nextBtn = document.querySelector('.nav-btn.next');
-        
-        prevBtn.disabled = currentFilteredIndex <= 0;
-        nextBtn.disabled = currentFilteredIndex >= this.filteredQuotes.length - 1;
+        const n = this.modalIds.length;
+        document.querySelector('#quoteModal .nav-btn.prev').disabled = this.modalPos <= 0;
+        document.querySelector('#quoteModal .nav-btn.next').disabled = this.modalPos >= n - 1;
+        document.querySelector('#quoteModal .quote-nav-pos').textContent = `${this.modalPos + 1} / ${n}`;
+        document.querySelector('#quoteModal .quote-nav').hidden = n <= 1;
     }
 
     // ===== THEME SYSTEM =====
@@ -838,170 +892,81 @@ class KuotApp {
 
     applyTheme() {
         document.documentElement.setAttribute('data-theme', this.currentTheme);
-        
-        // Update theme selector
         document.querySelectorAll('.theme-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.theme === this.currentTheme);
         });
     }
 
-    // ===== EDIT QUOTE FUNCTIONALITY =====
-    openEditModal(index, event = null) {
-        if (event) {
-            event.stopPropagation();
-        }
-        
-        if (index < 0 || index >= this.quotes.length) {
-            return;
-        }
-        
-        this.currentEditIndex = index;
-        const quote = this.quotes[index];
-        
-        // Populate form with existing data
+    // ===== EDIT QUOTE =====
+    openEditModal(id) {
+        const quote = this.getQuote(id);
+        if (!quote) return;
+
+        this.currentEditId = id;
         document.getElementById('editQuoteText').value = quote.text;
         document.getElementById('editAuthorName').value = quote.author;
-        document.getElementById('editQuoteDate').value = quote.date;
-        
-        // Handle photo
-        const placeholder = document.getElementById('editPhotoPlaceholder');
-        const preview = document.getElementById('editPhotoPreview');
-        const previewImg = document.getElementById('editPhotoPreviewImg');
-        
-        if (quote.photo) {
-            placeholder.style.display = 'none';
-            preview.style.display = 'block';
-            previewImg.src = quote.photo;
-            this.tempEditPhotoData = quote.photo;
-        } else {
-            placeholder.style.display = 'flex';
-            preview.style.display = 'none';
-            delete this.tempEditPhotoData;
-        }
-        
-        // Update character counter
+        document.getElementById('editQuoteDate').value = quote.date || '';
+
+        this.photoState.edit = { data: null, origine: null, rifiutataPer: null };
+        document.getElementById('editPhotoInput').value = '';
+        this.setFormPhoto('edit', quote.photo || null, 'citazione');
+
         this.updateEditCharCounter();
-        
-        // Close quote modal if open
         this.closeQuoteModal();
-        
-        // Show edit modal
+
         const modal = document.getElementById('editQuoteModal');
         modal.classList.add('active');
+        modal.querySelector('.edit-quote-container').scrollTop = 0;
     }
-    
+
     closeEditModal() {
-        const modal = document.getElementById('editQuoteModal');
-        modal.classList.remove('active');
-        
-        // Clear form
+        document.getElementById('editQuoteModal').classList.remove('active');
         document.getElementById('editQuoteForm').reset();
-        const placeholder = document.getElementById('editPhotoPlaceholder');
-        const preview = document.getElementById('editPhotoPreview');
-        placeholder.style.display = 'flex';
-        preview.style.display = 'none';
-        delete this.tempEditPhotoData;
-        delete this.currentEditIndex;
+        this.photoState.edit = { data: null, origine: null, rifiutataPer: null };
+        this.setFormPhoto('edit', null, null);
+        delete this.currentEditId;
     }
-    
-    updateEditCharCounter() {
-        const textarea = document.getElementById('editQuoteText');
-        const counter = document.querySelector('#editQuoteForm .char-counter');
-        const current = textarea.value.length;
-        const max = textarea.getAttribute('maxlength');
-        
-        counter.textContent = `${current}/${max}`;
-        counter.style.color = current > max * 0.9 ? 'var(--warning)' : 'var(--text-secondary)';
-    }
-    
-    async handleEditPhotoUpload(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-        
-        try {
-            // Process image
-            const processedBlob = await this.processImage(file);
-            const dataURL = await this.imageToDataURL(processedBlob);
-            
-            // Show preview
-            const placeholder = document.getElementById('editPhotoPlaceholder');
-            const preview = document.getElementById('editPhotoPreview');
-            const previewImg = document.getElementById('editPhotoPreviewImg');
-            
-            placeholder.style.display = 'none';
-            preview.style.display = 'block';
-            previewImg.src = dataURL;
-            
-            // Store processed image data
-            this.tempEditPhotoData = dataURL;
-        } catch (error) {
-            console.error('Error processing image:', error);
-            this.showError('Failed to process image');
-        }
-    }
-    
-    removeEditPhoto(event) {
-        event.stopPropagation();
-        
-        const placeholder = document.getElementById('editPhotoPlaceholder');
-        const preview = document.getElementById('editPhotoPreview');
-        
-        placeholder.style.display = 'flex';
-        preview.style.display = 'none';
-        
-        document.getElementById('editPhotoInput').value = '';
-        delete this.tempEditPhotoData;
-    }
-    
+
     async saveEditedQuote() {
-        if (this.currentEditIndex === undefined || this.currentEditIndex < 0 || this.currentEditIndex >= this.quotes.length) {
-            this.showError('Invalid quote index');
+        const quote = this.getQuote(this.currentEditId);
+        if (!quote) {
+            this.showError('Citazione non trovata');
             return;
         }
-        
+
         const form = document.getElementById('editQuoteForm');
         const submitBtn = form.querySelector('.submit-btn');
-        
-        // Get form data
         const text = document.getElementById('editQuoteText').value.trim();
         const author = document.getElementById('editAuthorName').value.trim();
-        const date = document.getElementById('editQuoteDate').value;
-        
-        // Validate
+        const date = document.getElementById('editQuoteDate').value.trim();
+
         if (!text || !author) {
-            this.showError('Please fill in all required fields');
+            this.showError('Servono sia la citazione sia l\'autore');
             return;
         }
-        
+
         try {
             submitBtn.classList.add('loading');
             submitBtn.disabled = true;
-            
-            // Update quote object
-            const quote = this.quotes[this.currentEditIndex];
+
             quote.text = text;
             quote.author = author;
-            quote.date = date || quote.date; // Keep original date if not changed
-            quote.dateStandardized = this.standardizeDate(date || quote.date);
-            quote.photo = this.tempEditPhotoData || null;
+            quote.date = date || quote.date;
+            quote.dateStandardized = this.standardizeDate(quote.date);
+            quote.photo = this.photoState.edit.data || null;
             quote.updatedAt = new Date().toISOString();
-            
-            // Save to storage
-            await this.saveQuotes();
-            
-            // Close modal
+
+            await this.putQuote(quote);
+
+            const id = quote.id;
             this.closeEditModal();
-            
-            // Update displays
-            this.updateLibraryView();
-            if (this.currentEditIndex === this.dailyQuoteIndex) {
-                this.displayDailyQuote();
-            }
-            
-            this.showSuccess('Quote updated successfully!');
+            this.updateAuthorList();
+            this.refreshViews(id);
+
+            this.showSuccess('Modifiche salvate');
         } catch (error) {
             console.error('Error updating quote:', error);
-            this.showError('Failed to update quote');
+            this.showError('Non sono riuscito a salvare le modifiche');
         } finally {
             submitBtn.classList.remove('loading');
             submitBtn.disabled = false;
@@ -1009,184 +974,125 @@ class KuotApp {
     }
 
     // ===== IMAGE FULLSCREEN MODAL =====
-    openImageModal(imageSrc, authorName) {
-        const modal = document.getElementById('imageModal');
-        const fullscreenImage = document.getElementById('fullscreenImage');
-        const authorNameElement = document.querySelector('.image-author-name');
-        
-        fullscreenImage.src = imageSrc;
-        authorNameElement.textContent = authorName || '';
-        
-        modal.classList.add('active');
-        
-        // Prevent body scrolling
+    openImageModal(id) {
+        const quote = this.getQuote(id);
+        if (!quote || !quote.photo) return;
+        document.getElementById('fullscreenImage').src = quote.photo;
+        document.querySelector('.image-author-name').textContent = quote.author || '';
+        document.getElementById('imageModal').classList.add('active');
         document.body.style.overflow = 'hidden';
-        
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                this.closeImageModal();
-            }
-        });
-        
-        // Close on ESC key
-        document.addEventListener('keydown', this.handleImageModalKeydown.bind(this));
     }
-    
+
     closeImageModal() {
-        const modal = document.getElementById('imageModal');
-        modal.classList.remove('active');
-        
-        // Restore body scrolling
+        document.getElementById('imageModal').classList.remove('active');
         document.body.style.overflow = '';
-        
-        // Remove event listeners
-        document.removeEventListener('keydown', this.handleImageModalKeydown.bind(this));
-    }
-    
-    handleImageModalKeydown(event) {
-        if (event.key === 'Escape') {
-            this.closeImageModal();
-        }
     }
 
     // ===== SETTINGS =====
     toggleSettings() {
-        const panel = document.getElementById('settingsPanel');
-        panel.classList.toggle('active');
+        document.getElementById('settingsPanel').classList.toggle('active');
     }
 
     // ===== DATE HANDLING =====
     formatDateInput(event) {
         const input = event.target;
         const value = input.value.trim();
-        
         if (!value) return;
-        
         const formattedDate = this.parseAndFormatDate(value);
-        if (formattedDate !== value) {
-            input.value = formattedDate;
-        }
+        if (formattedDate !== input.value) input.value = formattedDate;
     }
-    
+
     parseAndFormatDate(dateString) {
         const cleaned = dateString.trim();
-        
-        // If it's already a valid format, return as is
-        if (this.isValidDateFormat(cleaned)) {
-            return cleaned;
-        }
-        
-        // Try to parse various formats
-        const yearOnlyMatch = cleaned.match(/^(\d{4})$/);
-        if (yearOnlyMatch) {
-            return yearOnlyMatch[1];
-        }
-        
-        // Month Year format (e.g., "March 1963", "03/1963", "Mar 1963")
-        const monthYearMatch = cleaned.match(/^(\w+)\s+(\d{4})$/i);
+
+        if (this.isValidDateFormat(cleaned)) return cleaned;
+
+        // "marzo 1963", "mar 1963", "March 1963"
+        const monthYearMatch = cleaned.match(/^([a-zà-ù]+)\.?\s+(\d{3,4})$/i);
         if (monthYearMatch) {
             const month = this.parseMonth(monthYearMatch[1]);
-            if (month) {
-                return `${month}/${monthYearMatch[2]}`;
+            if (month) return `${month}/${monthYearMatch[2]}`;
+        }
+
+        // "8 aprile 2022", "8 apr 2022"
+        const dayMonthYear = cleaned.match(/^(\d{1,2})\s+([a-zà-ù]+)\.?\s+(\d{3,4})$/i);
+        if (dayMonthYear) {
+            const month = this.parseMonth(dayMonthYear[2]);
+            const day = parseInt(dayMonthYear[1], 10);
+            if (month && day >= 1 && day <= 31) {
+                return `${String(day).padStart(2, '0')}/${month}/${dayMonthYear[3]}`;
             }
         }
-        
-        // MM/YYYY format
-        const mmYyyyMatch = cleaned.match(/^(\d{1,2})\/(\d{4})$/);
+
+        const mmYyyyMatch = cleaned.match(/^(\d{1,2})[\/\-\.](\d{4})$/);
         if (mmYyyyMatch) {
-            const month = parseInt(mmYyyyMatch[1]);
-            if (month >= 1 && month <= 12) {
-                return `${month.toString().padStart(2, '0')}/${mmYyyyMatch[2]}`;
-            }
+            const month = parseInt(mmYyyyMatch[1], 10);
+            if (month >= 1 && month <= 12) return `${String(month).padStart(2, '0')}/${mmYyyyMatch[2]}`;
         }
-        
-        // Full date formats (DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY)
+
         const fullDateMatch = cleaned.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
         if (fullDateMatch) {
-            const day = parseInt(fullDateMatch[1]);
-            const month = parseInt(fullDateMatch[2]);
-            const year = parseInt(fullDateMatch[3]);
-            
+            const day = parseInt(fullDateMatch[1], 10);
+            const month = parseInt(fullDateMatch[2], 10);
             if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
-                return `${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}/${year}`;
+                return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${fullDateMatch[3]}`;
             }
         }
-        
-        // Return original if can't parse
+
+        // Tutto il resto ("1800 circa", "350 a.C.") resta come e' scritto.
         return cleaned;
     }
-    
+
     isValidDateFormat(dateString) {
-        // Check if it matches our accepted formats
-        const formats = [
-            /^\d{4}$/, // YYYY
-            /^\d{1,2}\/\d{4}$/, // MM/YYYY
-            /^\d{1,2}\/\d{1,2}\/\d{4}$/, // DD/MM/YYYY
-        ];
-        
-        return formats.some(format => format.test(dateString));
+        return [/^\d{4}$/, /^\d{1,2}\/\d{4}$/, /^\d{1,2}\/\d{1,2}\/\d{4}$/].some(f => f.test(dateString));
     }
-    
+
     parseMonth(monthString) {
-        const months = {
-            'jan': '01', 'january': '01',
-            'feb': '02', 'february': '02',
-            'mar': '03', 'march': '03',
-            'apr': '04', 'april': '04',
-            'may': '05',
-            'jun': '06', 'june': '06',
-            'jul': '07', 'july': '07',
-            'aug': '08', 'august': '08',
-            'sep': '09', 'september': '09',
-            'oct': '10', 'october': '10',
-            'nov': '11', 'november': '11',
-            'dec': '12', 'december': '12'
-        };
-        
-        const normalized = monthString.toLowerCase();
-        return months[normalized] || null;
+        const n = this.normalizza(monthString);
+        const mesi = [
+            ['gen', 'gennaio', 'jan', 'january'],
+            ['feb', 'febbraio', 'february'],
+            ['mar', 'marzo', 'march'],
+            ['apr', 'aprile', 'april'],
+            ['mag', 'maggio', 'may'],
+            ['giu', 'giugno', 'jun', 'june'],
+            ['lug', 'luglio', 'jul', 'july'],
+            ['ago', 'agosto', 'aug', 'august'],
+            ['set', 'sett', 'settembre', 'sep', 'sept', 'september'],
+            ['ott', 'ottobre', 'oct', 'october'],
+            ['nov', 'novembre', 'november'],
+            ['dic', 'dicembre', 'dec', 'december']
+        ];
+        const i = mesi.findIndex((nomi) => nomi.includes(n));
+        return i === -1 ? null : String(i + 1).padStart(2, '0');
     }
-    
-    // Convert our flexible date format to a standard date for storage and display
+
     standardizeDate(dateString) {
         if (!dateString) return '';
-        
-        // Year only
-        if (/^\d{4}$/.test(dateString)) {
-            return `${dateString}-01-01`;
-        }
-        
-        // Month/Year
+        if (/^\d{4}$/.test(dateString)) return `${dateString}-01-01`;
         if (/^\d{1,2}\/\d{4}$/.test(dateString)) {
             const [month, year] = dateString.split('/');
             return `${year}-${month.padStart(2, '0')}-01`;
         }
-        
-        // Full date DD/MM/YYYY
         if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) {
             const [day, month, year] = dateString.split('/');
             return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
         }
-        
         return dateString;
     }
 
     // ===== UTILITY FUNCTIONS =====
     updateCurrentDate() {
         const dateElement = document.querySelector('.current-date');
-        const now = new Date();
-        const options = { 
-            weekday: 'short', 
-            month: 'short', 
-            day: 'numeric' 
-        };
-        dateElement.textContent = now.toLocaleDateString('en-US', options);
+        const testo = new Date().toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' });
+        dateElement.textContent = testo.charAt(0).toUpperCase() + testo.slice(1);
     }
 
     getAuthorInitials(author) {
-        return author
-            .split(' ')
+        return String(author || '')
+            .replace(/\([^)]*\)/g, ' ')
+            .split(/\s+/)
+            .filter(Boolean)
             .map(word => word.charAt(0).toUpperCase())
             .slice(0, 2)
             .join('');
@@ -1194,55 +1100,33 @@ class KuotApp {
 
     formatDate(dateString) {
         if (!dateString) return '';
-        
-        // Handle our flexible date formats
-        // Year only (e.g., "1963")
-        if (/^\d{4}$/.test(dateString)) {
-            return dateString;
+        const s = String(dateString).trim();
+
+        if (/^\d{4}$/.test(s)) return s;
+
+        if (/^\d{1,2}\/\d{4}$/.test(s)) {
+            const [month, year] = s.split('/');
+            const nome = MESI_BREVI[parseInt(month, 10) - 1];
+            return nome ? `${nome} ${year}` : s;
         }
-        
-        // Month/Year (e.g., "03/1963")
-        if (/^\d{1,2}\/\d{4}$/.test(dateString)) {
-            const [month, year] = dateString.split('/');
-            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            return `${monthNames[parseInt(month) - 1]} ${year}`;
+
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
+            const [day, month, year] = s.split('/');
+            const nome = MESI_BREVI[parseInt(month, 10) - 1];
+            return nome ? `${parseInt(day, 10)} ${nome} ${year}` : s;
         }
-        
-        // Full date (e.g., "15/03/1963")
-        if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) {
-            const [day, month, year] = dateString.split('/');
-            const date = new Date(year, month - 1, day);
-            const options = { 
-                year: 'numeric', 
-                month: 'short', 
-                day: 'numeric' 
-            };
-            return date.toLocaleDateString('en-US', options);
-        }
-        
-        // Fallback for any other format
-        try {
-            const date = new Date(dateString);
-            if (!isNaN(date.getTime())) {
-                const options = { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: 'numeric' 
-                };
-                return date.toLocaleDateString('en-US', options);
-            }
-        } catch (e) {
-            // If all else fails, return the original string
-        }
-        
-        return dateString;
+
+        // Date scritte a parole ("1800 circa", "8 aprile 2022"): come sono.
+        return s;
     }
 
     escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return String(text ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     shuffleArray(array) {
@@ -1263,54 +1147,13 @@ class KuotApp {
     }
 
     showNotification(message, type = 'info') {
-        // Create notification element
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: ${type === 'error' ? 'var(--danger)' : 'var(--success)'};
-            color: white;
-            padding: 12px 24px;
-            border-radius: 8px;
-            z-index: 10000;
-            animation: slideInDown 0.3s ease-out;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            font-weight: 500;
-            max-width: 90%;
-            text-align: center;
-        `;
         notification.textContent = message;
-        
-        // Add animation styles
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes slideInDown {
-                from { transform: translateX(-50%) translateY(-100%); opacity: 0; }
-                to { transform: translateX(-50%) translateY(0); opacity: 1; }
-            }
-            @keyframes slideOutUp {
-                from { transform: translateX(-50%) translateY(0); opacity: 1; }
-                to { transform: translateX(-50%) translateY(-100%); opacity: 0; }
-            }
-        `;
-        document.head.appendChild(style);
-        
         document.body.appendChild(notification);
-        
-        // Remove after 3 seconds
         setTimeout(() => {
-            notification.style.animation = 'slideOutUp 0.3s ease-in forwards';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-                if (style.parentNode) {
-                    style.parentNode.removeChild(style);
-                }
-            }, 300);
+            notification.classList.add('uscita');
+            setTimeout(() => notification.remove(), 300);
         }, 3000);
     }
 }
@@ -1318,48 +1161,26 @@ class KuotApp {
 // ===== GLOBAL FUNCTIONS (for HTML onclick handlers) =====
 let app;
 
-function switchTab(tab) {
-    app.switchTab(tab);
-}
-
-function toggleSettings() {
-    app.toggleSettings();
-}
-
-function removePhoto(event) {
-    app.removePhoto(event);
-}
-
-function closeQuoteModal() {
-    app.closeQuoteModal();
-}
-
-function navigateQuote(direction) {
-    app.navigateQuote(direction);
-}
-
-function closeEditModal() {
-    app.closeEditModal();
-}
-
-function removeEditPhoto(event) {
-    app.removeEditPhoto(event);
-}
-
-function closeImageModal() {
-    app.closeImageModal();
-}
+function switchTab(tab) { app.switchTab(tab); }
+function toggleSettings() { app.toggleSettings(); }
+function removePhoto(event) { app.removeFormPhoto('add', event); }
+function removeEditPhoto(event) { app.removeFormPhoto('edit', event); }
+function closeQuoteModal() { app.closeQuoteModal(); }
+function navigateQuote(direction) { app.navigateQuote(direction); }
+function closeEditModal() { app.closeEditModal(); }
+function closeImageModal() { app.closeImageModal(); }
 
 // ===== INITIALIZATION =====
 document.addEventListener('DOMContentLoaded', () => {
     app = new KuotApp();
+    window.app = app;
 });
 
 // ===== SERVICE WORKER REGISTRATION (for PWA capabilities) =====
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
         navigator.serviceWorker.register('./kuot-sw.js')
-            .then(registration => console.log('SW registered'))
-            .catch(error => console.log('SW registration failed'));
+            .then(() => console.log('SW registered'))
+            .catch(() => console.log('SW registration failed'));
     });
 }
