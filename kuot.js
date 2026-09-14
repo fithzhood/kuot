@@ -306,9 +306,14 @@ class KuotApp {
     // Il blocco citazione usato sia in Home sia nella scheda.
     quoteContentHTML(quote, extraClass = '') {
         const id = quote.id;
+        // Sul telefono il corpo 20 diventa 26 (scala dei caratteri 1,3): una
+        // citazione di 500 caratteri occupava due schermate. Le lunghe si
+        // stringono un po'.
+        const n = quote.text.length;
+        const taglia = n > 320 ? 'lunghissima' : n > 180 ? 'lunga' : '';
         return `
             <div class="quote-content ${extraClass}">
-                <div class="quote-text">${this.escapeHtml(quote.text)}</div>
+                <div class="quote-text ${taglia}">${this.escapeHtml(quote.text)}</div>
                 <div class="quote-meta">
                     ${quote.photo
                         ? `<img src="${quote.photo}" alt="${this.escapeHtml(quote.author)}" class="author-photo clickable-image" data-action="photo" data-id="${id}">`

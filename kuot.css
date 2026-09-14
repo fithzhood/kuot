@@ -1513,3 +1513,24 @@ body.capacitor .bottom-nav {
     stroke-linecap: round;
     stroke-linejoin: round;
 }
+
+/* Citazioni lunghe: corpo un po' piu' piccolo (vedi quoteContentHTML). */
+.quote-text.lunga {
+    font-size: 18px;
+}
+
+.quote-text.lunghissima {
+    font-size: 16px;
+    line-height: 1.45;
+}
+
+/* Annulla e Salva della stessa altezza: il margine sopra "Salva" allungava
+   anche "Annulla", che si stirava fino a riempire la riga. */
+.form-actions {
+    align-items: stretch;
+}
+
+.form-actions .submit-btn {
+    margin-top: 0;
+    padding: var(--space-sm);
+}
