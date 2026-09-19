@@ -66,9 +66,14 @@ class KuotApp {
             this.updateCurrentDate();
             this.applyTheme();
 
+            // Prima del sorteggio: se il blocco e' attivo, la citazione del
+            // giorno l'ha gia' decisa la parte Android.
+            await this.avviaBlocco();
+
             this.updateDailyQuote();
             this.updateLibraryView();
             this.updateAuthorList();
+            this.avviata = true;
 
             console.log('Kuot App initialized successfully');
         } catch (error) {
@@ -303,6 +308,233 @@ class KuotApp {
         this.usedQuoteIds.push(this.dailyQuoteId);
     }
 
+    // ===== SCHERMATA DI BLOCCO =====
+    //
+    // Solo dentro l'APK dalla 1.1. Il guscio Android mette la citazione del
+    // giorno come sfondo della schermata di blocco e la cambia da solo a
+    // mezzanotte, ad app chiusa. Per riuscirci deve decidere LUI qual e' la
+    // citazione del giorno: da qui gli si consegna l'elenco (l'IndexedDB da la'
+    // non si legge) e si adotta la sua scelta, cosi' app e blocco mostrano
+    // sempre la stessa. Nel browser, o con l'interruttore spento, non cambia
+    // niente rispetto a prima.
+    blocco() {
+        const p = isCapacitorNative() && window.Capacitor.Plugins && window.Capacitor.Plugins.Blocco;
+        return p || null;
+    }
+
+    // Quanto basta a capire se una foto e' cambiata, senza confrontarla tutta.
+    firmaFoto(photo) {
+        if (!photo) return '';
+        let h = 5381;
+        const passo = Math.max(1, Math.floor(photo.length / 512));
+        for (let i = 0; i < photo.length; i += passo) h = ((h * 33) ^ photo.charCodeAt(i)) >>> 0;
+        return photo.length + ':' + h;
+    }
+
+    // All'avvio. Se il ponte non risponde, l'app parte lo stesso.
+    async avviaBlocco() {
+        if (!this.blocco()) return;
+        try {
+            await Promise.race([
+                this.sincronizzaBlocco(),
+                new Promise((_, no) => setTimeout(() => no(new Error('il guscio non risponde')), 4000))
+            ]);
+        } catch (error) {
+            console.warn('Blocco:', error);
+        }
+    }
+
+    // Dopo ogni aggiunta, modifica o eliminazione: senza far aspettare nessuno.
+    avvisaBlocco() {
+        if (!this.blocco() || !this.bloccoStato || !this.bloccoStato.attivo) return;
+        this.sincronizzaBlocco().catch((error) => console.warn('Blocco:', error));
+    }
+
+    // `attivazione`: fin li' il conto delle citazioni gia' uscite l'ha tenuto
+    // questa pagina, e lo si passa di la'. `aspetta`: torna solo a sfondo
+    // ridisegnato, e un eventuale errore arriva a chi ha chiamato.
+    async sincronizzaBlocco({ attivazione = false, aspetta = false, forza = false } = {}) {
+        const B = this.blocco();
+        if (!B) return;
+        this.bloccoStato = await B.stato();
+        this.mostraStatoBlocco();
+        if (!this.bloccoStato.attivo) return;
+
+        const today = new Date().toDateString();
+        const miaDiOggi = this.dailyQuoteDate === today && this.getQuote(this.dailyQuoteId);
+        const richiesta = {
+            citazioni: this.quotes.map((q) => ({
+                id: String(q.id),
+                testo: q.text,
+                autore: q.author,
+                data: this.formatDate(q.date),
+                firmaFoto: this.firmaFoto(q.photo)
+            })),
+            idDiOggi: miaDiOggi ? String(this.dailyQuoteId) : null
+        };
+        if (attivazione) richiesta.usati = this.usedQuoteIds.map(String);
+        const r = await B.sincronizza(richiesta);
+
+        if (r.idDelGiorno) {
+            const id = Number(r.idDelGiorno);
+            const cambiata = id !== this.dailyQuoteId;
+            this.dailyQuoteId = id;
+            this.dailyQuoteDate = today;
+            this.usedQuoteIds = (r.usati || []).map(Number);
+            await this.saveSettings();
+            if (cambiata && this.avviata) this.displayDailyQuote();
+        }
+
+        // Le foto passano una alla volta. Quella di oggi per prima, poi si
+        // ridisegna; le altre seguono in sottofondo e servono da domani.
+        const mancanti = r.mancanti || [];
+        const giro = (this.bloccoGiro = (this.bloccoGiro || 0) + 1);
+        const lavoro = (async () => {
+            await this.mandaFotoAlBlocco(mancanti.filter((id) => id === r.idDelGiorno), giro);
+            await B.aggiorna({ forza: forza || attivazione });
+        })();
+        lavoro
+            .then(() => this.mandaFotoAlBlocco(mancanti.filter((id) => id !== r.idDelGiorno), giro))
+            .catch((error) => console.warn('Blocco:', error));
+        if (aspetta) await lavoro;
+    }
+
+    async mandaFotoAlBlocco(ids, giro) {
+        const B = this.blocco();
+        for (const idTesto of ids) {
+            // Se nel frattempo e' partita una sincronizzazione piu' recente, ci pensa lei.
+            if (giro !== this.bloccoGiro) return;
+            const q = this.getQuote(Number(idTesto));
+            if (!q || !q.photo) continue;
+            await B.salvaFoto({
+                id: idTesto,
+                firma: this.firmaFoto(q.photo),
+                dati: q.photo.slice(q.photo.indexOf(',') + 1)
+            });
+        }
+    }
+
+    mostraStatoBlocco() {
+        const sezione = document.getElementById('bloccoSezione');
+        const st = this.bloccoStato;
+        if (!sezione) return;
+        sezione.hidden = !st;
+        if (!st) return;
+        document.getElementById('bloccoAttivo').setAttribute('aria-checked', st.attivo ? 'true' : 'false');
+        document.getElementById('bloccoOpzioni').hidden = !st.attivo;
+        document.querySelectorAll('.blocco-sfondo-btn').forEach((b) => {
+            b.classList.toggle('active', b.dataset.sfondo === st.sfondo);
+        });
+    }
+
+    async cambiaBlocco() {
+        const B = this.blocco();
+        if (!B || this.bloccoOccupato) return;
+        const attivo = !(this.bloccoStato && this.bloccoStato.attivo);
+        if (attivo && !confirm('Lo sfondo che hai adesso sulla schermata di blocco verrà sostituito, e da qui non si può rimettere. Continuo?')) return;
+
+        this.bloccoOccupato = true;
+        try {
+            this.bloccoStato = await B.attiva({ attivo });
+            this.mostraStatoBlocco();
+            if (attivo) {
+                await this.sincronizzaBlocco({ attivazione: true, aspetta: true });
+                this.showSuccess('La citazione di oggi è sulla schermata di blocco');
+            }
+        } catch (error) {
+            console.error('Blocco:', error);
+            this.showError('Non sono riuscito a cambiare lo sfondo del blocco');
+        } finally {
+            this.bloccoOccupato = false;
+        }
+    }
+
+    // `dati`: il JPEG in base64 di un'immagine appena scelta, oppure niente
+    // per passare da un fondo all'altro.
+    async scegliSfondoBlocco(modo, dati = '') {
+        const B = this.blocco();
+        if (!B || this.bloccoOccupato) return;
+        this.bloccoOccupato = true;
+        try {
+            this.bloccoStato = await B.impostaSfondo({ modo, dati });
+            this.mostraStatoBlocco();
+            await this.sincronizzaBlocco({ aspetta: true });
+            this.showSuccess('Schermata di blocco ridisegnata');
+        } catch (error) {
+            console.error('Blocco:', error);
+            this.showError('Non sono riuscito a cambiare lo sfondo del blocco');
+        } finally {
+            this.bloccoOccupato = false;
+        }
+    }
+
+    // L'immagine scelta si ritaglia qui alla misura dello schermo: di la'
+    // arriva gia' pronta, e dal ponte passa un file piccolo.
+    immaginePerIlBlocco(file) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                let W = Math.round(screen.width * devicePixelRatio);
+                let H = Math.round(screen.height * devicePixelRatio);
+                if (W > H) [W, H] = [H, W];
+                const canvas = document.createElement('canvas');
+                canvas.width = W;
+                canvas.height = H;
+                const scala = Math.max(W / img.width, H / img.height);
+                const w = img.width * scala, h = img.height * scala;
+                canvas.getContext('2d').drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+                URL.revokeObjectURL(img.src);
+                const url = canvas.toDataURL('image/jpeg', 0.92);
+                resolve(url.slice(url.indexOf(',') + 1));
+            };
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+        });
+    }
+
+    setupBlocco() {
+        document.getElementById('bloccoAttivo').addEventListener('click', () => this.cambiaBlocco());
+
+        const scelta = document.getElementById('bloccoImmagine');
+        document.querySelectorAll('.blocco-sfondo-btn').forEach((b) => {
+            b.addEventListener('click', () => {
+                const st = this.bloccoStato || {};
+                if (b.dataset.sfondo === 'ritratto') {
+                    if (st.sfondo !== 'ritratto') this.scegliSfondoBlocco('ritratto');
+                } else if (st.haImmagine && st.sfondo !== 'immagine') {
+                    this.scegliSfondoBlocco('immagine');
+                } else {
+                    scelta.value = '';
+                    scelta.click();
+                }
+            });
+        });
+        scelta.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                await this.scegliSfondoBlocco('immagine', await this.immaginePerIlBlocco(file));
+            } catch (error) {
+                console.error('Blocco:', error);
+                this.showError('Non riesco a leggere quell\'immagine');
+            }
+        });
+
+        document.getElementById('bloccoAggiorna').addEventListener('click', async () => {
+            if (this.bloccoOccupato) return;
+            this.bloccoOccupato = true;
+            try {
+                await this.sincronizzaBlocco({ aspetta: true, forza: true });
+                this.showSuccess('Schermata di blocco ridisegnata');
+            } catch (error) {
+                console.error('Blocco:', error);
+                this.showError('Non sono riuscito a ridisegnare lo sfondo');
+            } finally {
+                this.bloccoOccupato = false;
+            }
+        });
+    }
+
     // Il blocco citazione usato sia in Home sia nella scheda.
     quoteContentHTML(quote, extraClass = '') {
         const id = quote.id;
@@ -418,6 +650,7 @@ class KuotApp {
         document.querySelectorAll('.theme-btn').forEach(btn => {
             btn.addEventListener('click', (e) => this.setTheme(e.currentTarget.dataset.theme));
         });
+        this.setupBlocco();
 
         // Un solo ascoltatore per tutti i pulsanti dentro le citazioni: i
         // pulsanti portano l'id della citazione in data-id, cosi' nell'HTML
@@ -646,6 +879,7 @@ class KuotApp {
             this.switchTab('library');
 
             if (this.quotes.length === 1) this.updateDailyQuote();
+            this.avvisaBlocco();
 
             this.showSuccess('Citazione salvata');
         } catch (error) {
@@ -802,6 +1036,7 @@ class KuotApp {
                 this.displayDailyQuote();
             }
             await this.saveSettings();
+            this.avvisaBlocco();
 
             this.updateLibraryView();
             this.updateAuthorList();
@@ -967,6 +1202,7 @@ class KuotApp {
             this.closeEditModal();
             this.updateAuthorList();
             this.refreshViews(id);
+            this.avvisaBlocco();
 
             this.showSuccess('Modifiche salvate');
         } catch (error) {

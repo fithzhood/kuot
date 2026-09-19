@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Kuot">
-    <link rel="stylesheet" href="kuot.css?v=5">
+    <link rel="stylesheet" href="kuot.css?v=6">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -46,6 +46,24 @@
                             <span class="theme-preview elegant"></span>
                             Elegante
                         </button>
+                    </div>
+                </div>
+                <!-- Solo nell'APK dalla 1.1: la sezione resta nascosta finche'
+                     il guscio Android non risponde. -->
+                <div class="blocco-sezione" id="bloccoSezione" hidden>
+                    <label>Schermata di blocco</label>
+                    <button class="blocco-interruttore" id="bloccoAttivo" type="button" role="switch" aria-checked="false">
+                        <span>Citazione del giorno sullo sfondo</span>
+                        <span class="blocco-levetta" aria-hidden="true"></span>
+                    </button>
+                    <div class="blocco-opzioni" id="bloccoOpzioni" hidden>
+                        <div class="blocco-sfondi">
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="ritratto">Ritratto sfocato</button>
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="immagine">Immagine mia</button>
+                        </div>
+                        <input type="file" id="bloccoImmagine" accept="image/*" hidden>
+                        <button class="blocco-aggiorna" id="bloccoAggiorna" type="button">Ridisegna adesso</button>
+                        <p class="blocco-nota">Cambia da sola a mezzanotte. Per un'altra immagine tocca di nuovo «Immagine mia». Se la spegni, lo sfondo resta l'ultimo: si cambia dalle impostazioni del telefono.</p>
                     </div>
                 </div>
                 <button class="close-settings" onclick="toggleSettings()">Chiudi</button>
@@ -245,7 +263,7 @@
         </nav>
     </div>
 
-    <script src="kuot.js?v=4"></script>
+    <script src="kuot.js?v=5"></script>
     <script src="backup.js?v=5"></script>
 </body>
 </html>
