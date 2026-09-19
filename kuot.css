@@ -1641,6 +1641,11 @@ body.capacitor .bottom-nav {
     cursor: pointer;
 }
 
+/* Cinque fondi su due colonne: l'ultimo, "Immagine mia", prende la riga intera. */
+.blocco-sfondo-btn.larga {
+    grid-column: 1 / -1;
+}
+
 .blocco-sfondo-btn.active {
     border-color: var(--primary);
     color: var(--primary);

@@ -499,8 +499,8 @@ class KuotApp {
         document.querySelectorAll('.blocco-sfondo-btn').forEach((b) => {
             b.addEventListener('click', () => {
                 const st = this.bloccoStato || {};
-                if (b.dataset.sfondo === 'ritratto') {
-                    if (st.sfondo !== 'ritratto') this.scegliSfondoBlocco('ritratto');
+                if (b.dataset.sfondo !== 'immagine') {
+                    if (st.sfondo !== b.dataset.sfondo) this.scegliSfondoBlocco(b.dataset.sfondo);
                 } else if (st.haImmagine && st.sfondo !== 'immagine') {
                     this.scegliSfondoBlocco('immagine');
                 } else {
@@ -518,6 +518,16 @@ class KuotApp {
                 console.error('Blocco:', error);
                 this.showError('Non riesco a leggere quell\'immagine');
             }
+        });
+
+        // Kuot puo' restare in memoria per giorni: al ritorno in primo piano la
+        // pagina non riparte da capo, quindi e' qui che ci si riallinea al
+        // giorno nuovo (e alla citazione che il blocco mostra gia' da mezzanotte).
+        document.addEventListener('visibilitychange', async () => {
+            if (document.visibilityState !== 'visible' || !this.avviata) return;
+            this.updateCurrentDate();
+            await this.avviaBlocco();
+            this.updateDailyQuote();
         });
 
         document.getElementById('bloccoAggiorna').addEventListener('click', async () => {

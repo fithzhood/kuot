@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Kuot">
-    <link rel="stylesheet" href="kuot.css?v=6">
+    <link rel="stylesheet" href="kuot.css?v=7">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -58,8 +58,11 @@
                     </button>
                     <div class="blocco-opzioni" id="bloccoOpzioni" hidden>
                         <div class="blocco-sfondi">
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="ritratto">Ritratto sfocato</button>
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="immagine">Immagine mia</button>
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="nero">Nero</button>
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="notte">Notte</button>
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="onde">Onde</button>
+                            <button class="blocco-sfondo-btn" type="button" data-sfondo="colori">Colori del ritratto</button>
+                            <button class="blocco-sfondo-btn larga" type="button" data-sfondo="immagine">Immagine mia</button>
                         </div>
                         <input type="file" id="bloccoImmagine" accept="image/*" hidden>
                         <button class="blocco-aggiorna" id="bloccoAggiorna" type="button">Ridisegna adesso</button>
@@ -263,7 +266,7 @@
         </nav>
     </div>
 
-    <script src="kuot.js?v=5"></script>
+    <script src="kuot.js?v=6"></script>
     <script src="backup.js?v=5"></script>
 </body>
 </html>
