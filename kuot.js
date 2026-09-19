@@ -27,6 +27,23 @@ document.addEventListener('DOMContentLoaded', () => {
 const MESI_BREVI = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
 const RECENTI_QUANTE = 10;
 
+// Gli stili dell'app (vedi i blocchi [data-stile] in kuot.css) e la luce:
+// 'chiaro', 'scuro', oppure 'auto' che segue il telefono.
+const STILI = ['serene', 'natural', 'elegant', 'classic'];
+const LUCI = ['chiaro', 'scuro', 'auto'];
+
+// Icone a tratto, stessa mano di quelle della barra in basso. Prima qui
+// c'erano delle emoji, che ogni telefono disegna a modo suo e a colori.
+const icona = (dentro) => `<svg class="icona" viewBox="0 0 24 24" aria-hidden="true">${dentro}</svg>`;
+const ICONE = {
+    stella: icona('<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z"/>'),
+    matita: icona('<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17z"/><path d="m14.5 7.5 3 3"/>'),
+    condividi: icona('<path d="M12 15V4"/><path d="m8 8 4-4 4 4"/><path d="M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/>'),
+    cestino: icona('<path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v5M14 11v5"/>'),
+    fumetto: icona('<path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.2A8 8 0 1 1 20 12z"/>'),
+    libri: icona('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>')
+};
+
 class KuotApp {
     constructor() {
         this.quotes = [];
@@ -38,6 +55,7 @@ class KuotApp {
         this.dailyQuoteId = null;
         this.usedQuoteIds = [];
         this.currentTheme = 'serene';
+        this.luce = 'auto';
 
         // Scheda aperta dalla Libreria: l'elenco che si scorre con le frecce
         // e' fissato al momento dell'apertura, cosi' un ordinamento casuale o
@@ -188,6 +206,7 @@ class KuotApp {
     async saveSettings() {
         const settings = {
             theme: this.currentTheme,
+            luce: this.luce,
             dailyQuoteDate: this.dailyQuoteDate,
             dailyQuoteId: this.dailyQuoteId,
             usedQuoteIds: this.usedQuoteIds
@@ -227,7 +246,8 @@ class KuotApp {
             console.error('Error loading settings:', error);
         }
 
-        this.currentTheme = settings.theme || 'serene';
+        this.currentTheme = STILI.includes(settings.theme) ? settings.theme : 'serene';
+        this.luce = LUCI.includes(settings.luce) ? settings.luce : 'auto';
         this.dailyQuoteDate = settings.dailyQuoteDate || null;
 
         if (settings.dailyQuoteId !== undefined || settings.usedQuoteIds !== undefined) {
@@ -567,15 +587,15 @@ class KuotApp {
                 </div>
                 <div class="quote-actions">
                     <button class="action-btn favorite ${quote.favorite ? 'active' : ''}" data-action="favorite" data-id="${id}">
-                        <span>${quote.favorite ? '★' : '☆'}</span>
+                        ${ICONE.stella}
                         Preferita
                     </button>
                     <button class="action-btn" data-action="edit" data-id="${id}">
-                        <span>✏️</span>
+                        ${ICONE.matita}
                         Modifica
                     </button>
                     <button class="action-btn" data-action="share" data-id="${id}">
-                        <span>📤</span>
+                        ${ICONE.condividi}
                         Condividi
                     </button>
                 </div>
@@ -590,7 +610,7 @@ class KuotApp {
         if (!quote) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-icon">💭</div>
+                    <div class="empty-icon">${ICONE.fumetto}</div>
                     <h2>Nessuna citazione</h2>
                     <p>Comincia la tua raccolta</p>
                     <button class="cta-button" onclick="app.switchTab('add')">Aggiungi la prima citazione</button>
@@ -657,9 +677,17 @@ class KuotApp {
             });
         });
 
-        document.querySelectorAll('.theme-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => this.setTheme(e.currentTarget.dataset.theme));
+        document.querySelectorAll('.stile-scheda').forEach((btn) => {
+            btn.addEventListener('click', () => this.setTheme(btn.dataset.stile));
         });
+        document.querySelectorAll('#luceScelta button').forEach((btn) => {
+            btn.addEventListener('click', () => this.setLuce(btn.dataset.luce));
+        });
+        // Con la luce su 'auto' si segue il telefono anche mentre l'app e' aperta.
+        if (window.matchMedia) {
+            matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => this.applyTheme());
+        }
+        this.setupSettingsSheet();
         this.setupBlocco();
 
         // Un solo ascoltatore per tutti i pulsanti dentro le citazioni: i
@@ -708,7 +736,8 @@ class KuotApp {
         });
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
-            if (imageModal.classList.contains('active')) this.closeImageModal();
+            if (document.getElementById('settingsPanel').classList.contains('active')) this.toggleSettings(false);
+            else if (imageModal.classList.contains('active')) this.closeImageModal();
             else if (document.getElementById('editQuoteModal').classList.contains('active')) this.closeEditModal();
             else if (document.getElementById('quoteModal').classList.contains('active')) this.closeQuoteModal();
         });
@@ -973,14 +1002,14 @@ class KuotApp {
                 testo = 'Prova con un’altra parola o togli i filtri';
             } else if (this.currentFilter === 'favorites') {
                 titolo = 'Nessuna preferita';
-                testo = 'Tocca ☆ su una citazione per segnarla';
+                testo = 'Tocca la stella su una citazione per segnarla';
             } else {
                 titolo = 'Nessuna citazione';
                 testo = 'Prova a togliere i filtri';
             }
             container.innerHTML = `
                 <div class="empty-state">
-                    <div class="empty-icon">📚</div>
+                    <div class="empty-icon">${ICONE.libri}</div>
                     <h2>${titolo}</h2>
                     <p>${testo}</p>
                 </div>
@@ -995,9 +1024,9 @@ class KuotApp {
                     <div class="quote-card-top">
                         <div class="quote-card-date">${this.escapeHtml(this.formatDate(quote.date))}</div>
                         <div class="quote-card-actions">
-                            <button class="card-action-btn favorite ${quote.favorite ? 'active' : ''}" data-action="favorite" data-id="${id}" aria-label="Preferita">${quote.favorite ? '★' : '☆'}</button>
-                            <button class="card-action-btn edit" data-action="edit" data-id="${id}" aria-label="Modifica">✏️</button>
-                            <button class="card-action-btn delete" data-action="delete" data-id="${id}" aria-label="Elimina">🗑️</button>
+                            <button class="card-action-btn favorite ${quote.favorite ? 'active' : ''}" data-action="favorite" data-id="${id}" aria-label="Preferita">${ICONE.stella}</button>
+                            <button class="card-action-btn edit" data-action="edit" data-id="${id}" aria-label="Modifica">${ICONE.matita}</button>
+                            <button class="card-action-btn delete" data-action="delete" data-id="${id}" aria-label="Elimina">${ICONE.cestino}</button>
                         </div>
                     </div>
                     <div class="quote-card-text">${this.escapeHtml(quote.text)}</div>
@@ -1134,17 +1163,53 @@ class KuotApp {
     }
 
     // ===== THEME SYSTEM =====
+    // Lo stile (colori e caratteri) e la luce (chiaro, scuro, come il telefono)
+    // sono due scelte separate. Finiscono su <html> come data-stile e data-luce,
+    // e una copia va nella memoria locale per lo script in testa alla pagina,
+    // che li applica prima che l'IndexedDB abbia risposto.
     setTheme(theme) {
+        if (!STILI.includes(theme)) return;
         this.currentTheme = theme;
         this.applyTheme();
         this.saveSettings();
     }
 
+    setLuce(luce) {
+        if (!LUCI.includes(luce)) return;
+        this.luce = luce;
+        this.applyTheme();
+        this.saveSettings();
+    }
+
+    luceEffettiva() {
+        if (this.luce !== 'auto') return this.luce;
+        return window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'scuro' : 'chiaro';
+    }
+
     applyTheme() {
-        document.documentElement.setAttribute('data-theme', this.currentTheme);
-        document.querySelectorAll('.theme-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.theme === this.currentTheme);
+        const luce = this.luceEffettiva();
+        const radice = document.documentElement;
+        radice.setAttribute('data-stile', this.currentTheme);
+        radice.setAttribute('data-luce', luce);
+        try {
+            localStorage.setItem('kuot_aspetto', JSON.stringify({ stile: this.currentTheme, luce: this.luce }));
+        } catch (e) { /* senza memoria locale si vede solo un lampo all'avvio */ }
+
+        // Le schede degli stili si colorano da sole: basta dirgli in che luce siamo.
+        document.querySelectorAll('.stile-scheda').forEach((btn) => {
+            const attiva = btn.dataset.stile === this.currentTheme;
+            btn.setAttribute('data-luce', luce);
+            btn.classList.toggle('active', attiva);
+            btn.setAttribute('aria-checked', attiva ? 'true' : 'false');
         });
+        document.querySelectorAll('#luceScelta button').forEach((btn) => {
+            const attiva = btn.dataset.luce === this.luce;
+            btn.classList.toggle('active', attiva);
+            btn.setAttribute('aria-checked', attiva ? 'true' : 'false');
+        });
+
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', getComputedStyle(radice).getPropertyValue('--background').trim());
     }
 
     // ===== EDIT QUOTE =====
@@ -1240,8 +1305,47 @@ class KuotApp {
     }
 
     // ===== SETTINGS =====
-    toggleSettings() {
-        document.getElementById('settingsPanel').classList.toggle('active');
+    toggleSettings(apri) {
+        const pannello = document.getElementById('settingsPanel');
+        const aperto = typeof apri === 'boolean' ? apri : !pannello.classList.contains('active');
+        pannello.classList.toggle('active', aperto);
+        pannello.setAttribute('aria-hidden', aperto ? 'false' : 'true');
+        if (!aperto) return;
+        pannello.querySelector('.sheet-corpo').scrollTop = 0;
+        const n = this.quotes.length;
+        document.getElementById('settingsPiede').textContent =
+            `${n} ${n === 1 ? 'citazione' : 'citazioni'} \u00b7 versione ${APP_BUILD}`;
+    }
+
+    // Il pannello si chiude toccando fuori, oppure trascinandolo giu' dalla
+    // testa (non dal corpo, che deve poter scorrere).
+    setupSettingsSheet() {
+        const pannello = document.getElementById('settingsPanel');
+        const foglio = pannello.querySelector('.settings-sheet');
+        pannello.addEventListener('click', (e) => {
+            if (e.target === pannello) this.toggleSettings(false);
+        });
+
+        let y0 = null, dy = 0;
+        const parte = (e) => { y0 = e.touches[0].clientY; dy = 0; foglio.classList.add('trascinato'); };
+        const muove = (e) => {
+            if (y0 === null) return;
+            dy = Math.max(0, e.touches[0].clientY - y0);
+            foglio.style.transform = `translateY(${dy}px)`;
+        };
+        const finisce = () => {
+            if (y0 === null) return;
+            y0 = null;
+            foglio.classList.remove('trascinato');
+            foglio.style.transform = '';
+            if (dy > 90) this.toggleSettings(false);
+        };
+        foglio.querySelectorAll('[data-trascina]').forEach((el) => {
+            el.addEventListener('touchstart', parte, { passive: true });
+            el.addEventListener('touchmove', muove, { passive: true });
+            el.addEventListener('touchend', finisce);
+            el.addEventListener('touchcancel', finisce);
+        });
     }
 
     // ===== DATE HANDLING =====

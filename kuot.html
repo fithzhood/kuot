@@ -5,14 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Kuot</title>
     <link rel="manifest" href="kuot-manifest.json">
-    <meta name="theme-color" content="#3498DB">
+    <meta name="theme-color" content="#E6ECF2">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="Kuot">
-    <link rel="stylesheet" href="kuot.css?v=7">
+    <script>
+        // Lo stile va messo prima che la pagina si disegni: le impostazioni vere
+        // stanno nell'IndexedDB, che risponde tardi, e senza questa copia nella
+        // memoria locale a ogni avvio si vedrebbe un lampo dello stile sbagliato.
+        (function () {
+            var a = {};
+            try { a = JSON.parse(localStorage.getItem('kuot_aspetto')) || {}; } catch (e) {}
+            var luce = a.luce === 'chiaro' || a.luce === 'scuro' ? a.luce
+                : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'scuro' : 'chiaro');
+            var r = document.documentElement;
+            r.setAttribute('data-stile', a.stile || 'serene');
+            r.setAttribute('data-luce', luce);
+        })();
+    </script>
+    <link rel="stylesheet" href="kuot.css?v=8">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Crimson+Text:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@400;500;600&family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=Fraunces:ital,wght@0,400;0,600;1,400&family=Instrument+Sans:wght@400;500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
     <div id="app" class="app-container">
@@ -29,50 +43,90 @@
             </button>
         </header>
 
-        <!-- Settings Panel -->
-        <div id="settingsPanel" class="settings-panel">
-            <div class="settings-content">
-                <h3>Impostazioni</h3>
-                <div class="theme-selector">
-                    <label>Tema</label>
-                    <div class="theme-options">
-                        <button class="theme-btn" data-theme="serene">
-                            <span class="theme-preview serene"></span>
-                            Sereno
-                        </button>
-                        <button class="theme-btn" data-theme="natural">
-                            <span class="theme-preview natural"></span>
-                            Naturale
-                        </button>
-                        <button class="theme-btn" data-theme="elegant">
-                            <span class="theme-preview elegant"></span>
-                            Elegante
-                        </button>
-                    </div>
-                </div>
-                <!-- Solo nell'APK dalla 1.1: la sezione resta nascosta finche'
-                     il guscio Android non risponde. -->
-                <div class="blocco-sezione" id="bloccoSezione" hidden>
-                    <label>Schermata di blocco</label>
-                    <button class="blocco-interruttore" id="bloccoAttivo" type="button" role="switch" aria-checked="false">
-                        <span>Citazione del giorno sullo sfondo</span>
-                        <span class="blocco-levetta" aria-hidden="true"></span>
+        <!-- Impostazioni: un pannello che sale dal basso. Si chiude con la X,
+             toccando fuori, trascinandolo giu' dalla testa, o con Esc. -->
+        <div id="settingsPanel" class="settings-panel" aria-hidden="true">
+            <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+                <div class="sheet-presa" data-trascina aria-hidden="true"></div>
+                <header class="sheet-testa" data-trascina>
+                    <h3 id="settingsTitle">Impostazioni</h3>
+                    <button class="sheet-chiudi" type="button" onclick="toggleSettings()" aria-label="Chiudi">
+                        <svg class="icona" viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
                     </button>
-                    <div class="blocco-opzioni" id="bloccoOpzioni" hidden>
-                        <div class="blocco-sfondi">
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="nero">Nero</button>
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="notte">Notte</button>
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="onde">Onde</button>
-                            <button class="blocco-sfondo-btn" type="button" data-sfondo="colori">Colori del ritratto</button>
-                            <button class="blocco-sfondo-btn larga" type="button" data-sfondo="immagine">Immagine mia</button>
+                </header>
+
+                <div class="sheet-corpo">
+                    <section class="set-sezione">
+                        <h4 class="set-occhiello">Aspetto</h4>
+                        <div class="stile-griglia" role="radiogroup" aria-label="Stile">
+                            <button class="stile-scheda" type="button" role="radio" data-stile="serene">
+                                <span class="stile-punti" aria-hidden="true"><i></i><i></i></span>
+                                <span class="stile-aa" aria-hidden="true">Aa</span>
+                                <span class="stile-nome">Sereno</span>
+                                <span class="stile-carattere">Crimson · Inter</span>
+                            </button>
+                            <button class="stile-scheda" type="button" role="radio" data-stile="natural">
+                                <span class="stile-punti" aria-hidden="true"><i></i><i></i></span>
+                                <span class="stile-aa" aria-hidden="true">Aa</span>
+                                <span class="stile-nome">Naturale</span>
+                                <span class="stile-carattere">Fraunces · Instrument</span>
+                            </button>
+                            <button class="stile-scheda" type="button" role="radio" data-stile="elegant">
+                                <span class="stile-punti" aria-hidden="true"><i></i><i></i></span>
+                                <span class="stile-aa" aria-hidden="true">Aa</span>
+                                <span class="stile-nome">Elegante</span>
+                                <span class="stile-carattere">Cormorant · DM Sans</span>
+                            </button>
+                            <button class="stile-scheda" type="button" role="radio" data-stile="classic">
+                                <span class="stile-punti" aria-hidden="true"><i></i><i></i></span>
+                                <span class="stile-aa" aria-hidden="true">Aa</span>
+                                <span class="stile-nome">Classico</span>
+                                <span class="stile-carattere">Garamond · DM Sans</span>
+                            </button>
                         </div>
-                        <input type="file" id="bloccoImmagine" accept="image/*" hidden>
-                        <button class="blocco-aggiorna" id="bloccoAggiorna" type="button">Ridisegna adesso</button>
-                        <p class="blocco-nota">Cambia da sola a mezzanotte. Per un'altra immagine tocca di nuovo «Immagine mia». Se la spegni, lo sfondo resta l'ultimo: si cambia dalle impostazioni del telefono.</p>
-                    </div>
+                        <p class="set-etichetta" id="luceEtichetta">Luce</p>
+                        <div class="segmenti" id="luceScelta" role="radiogroup" aria-labelledby="luceEtichetta">
+                            <button type="button" role="radio" data-luce="chiaro">Chiaro</button>
+                            <button type="button" role="radio" data-luce="scuro">Scuro</button>
+                            <button type="button" role="radio" data-luce="auto">Come il telefono</button>
+                        </div>
+                    </section>
+
+                    <!-- Solo nell'APK dalla 1.1: la sezione resta nascosta finche'
+                         il guscio Android non risponde. -->
+                    <section class="set-sezione" id="bloccoSezione" hidden>
+                        <h4 class="set-occhiello">Schermata di blocco</h4>
+                        <button class="set-riga" id="bloccoAttivo" type="button" role="switch" aria-checked="false">
+                            <span>Citazione del giorno sullo sfondo<small>Cambia da sola a mezzanotte</small></span>
+                            <span class="blocco-levetta" aria-hidden="true"></span>
+                        </button>
+                        <div class="blocco-opzioni" id="bloccoOpzioni" hidden>
+                            <p class="set-etichetta">Fondo</p>
+                            <div class="blocco-sfondi">
+                                <button class="blocco-sfondo-btn" type="button" data-sfondo="nero"><span class="blocco-campione"></span>Nero</button>
+                                <button class="blocco-sfondo-btn" type="button" data-sfondo="notte"><span class="blocco-campione"></span>Notte</button>
+                                <button class="blocco-sfondo-btn" type="button" data-sfondo="onde"><span class="blocco-campione"></span>Onde</button>
+                                <button class="blocco-sfondo-btn" type="button" data-sfondo="colori"><span class="blocco-campione"></span>Ritratto</button>
+                                <button class="blocco-sfondo-btn" type="button" data-sfondo="immagine"><span class="blocco-campione"><svg class="icona" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m21 16-5-5-9 9"/></svg></span>Mia</button>
+                            </div>
+                            <input type="file" id="bloccoImmagine" accept="image/*" hidden>
+                            <button class="set-riga" id="bloccoAggiorna" type="button">
+                                <span>Ridisegna adesso</span>
+                                <svg class="icona" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+                            </button>
+                            <p class="set-nota">«Ritratto» usa le tinte della foto dell'autore. Per cambiare immagine tocca di nuovo «Mia». Se spegni l'interruttore lo sfondo resta l'ultimo: si cambia dalle impostazioni del telefono.</p>
+                        </div>
+                    </section>
+
+                    <section class="set-sezione">
+                        <h4 class="set-occhiello">Dati</h4>
+                        <button class="set-riga" data-travaso type="button">
+                            <span>Travaso dati<small>Esporta o fa rientrare tutte le citazioni</small></span>
+                            <svg class="icona" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+                        </button>
+                        <p class="set-piede" id="settingsPiede"></p>
+                    </section>
                 </div>
-                <button class="close-settings" onclick="toggleSettings()">Chiudi</button>
-                <button class="travaso-voce" data-travaso type="button">&#10515; Travaso dati</button>
             </div>
         </div>
 
@@ -268,7 +322,7 @@
         </nav>
     </div>
 
-    <script src="kuot.js?v=6"></script>
+    <script src="kuot.js?v=7"></script>
     <script src="backup.js?v=5"></script>
 </body>
 </html>
